@@ -1,0 +1,88 @@
+<!doctype html><html lang=en>
+<head>
+<meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Sample Incident Record | The Sentinel Project</title>
+<meta name=description content="An example of how a Gatekeeper event can be summarized for review">
+<link rel=preconnect href=https://fonts.googleapis.com>
+<link rel=preconnect href=https://fonts.gstatic.com crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300&family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@300;400&display=swap" rel=stylesheet>
+<link rel=stylesheet href=/css/style.css>
+<link rel=icon type=image/svg+xml href=/images/favicon.svg>
+</head>
+<body>
+<div class=bg-orbs>
+<div class="orb orb-1"></div>
+<div class="orb orb-2"></div>
+<div class="orb orb-3"></div>
+<div class="orb orb-4"></div>
+</div>
+<header class=site-header>
+<nav class=nav>
+<a href=/ class=logo>Sentinel<span>Project</span> <span class=logo-sub>AI Firewall</span></a>
+<ul class=nav-links>
+<li><a href=/>Home</a></li>
+<li><a href=/agents/>Agents</a></li>
+<li><a href=/tools/>Tools</a></li>
+<li><a href=/reports/>Reports</a></li>
+<li><a href=/witness/>Witness</a></li>
+<li><a href=/about/>About</a></li>
+<li><a href=/reference/architecture/>Architecture</a></li>
+<li><a href=/reference/partner-brief/>Partner Brief</a></li>
+<li><a href=/certification/aidns/>Trust Framework</a></li>
+<li><a href=/reference/classification/>Risk Framework</a></li>
+<li><a href=/reference/pilot-intake/>Pilot Intake</a></li>
+<li><a href=/reference/maturity-matrix/>Maturity</a></li>
+</ul>
+<a class=nav-cta href=/contact/>Request Access</a>
+</nav>
+</header>
+<main class=main-content>
+<article>
+<header class=page-header>
+<h1>Sample Incident Record</h1>
+<p>An example of how a Gatekeeper event can be summarized for review</p>
+</header>
+<p>This is a simplified example showing the format and level of specificity expected in a Sentinel incident summary.</p>
+<h2 id=incident-summary>Incident summary</h2>
+<ul>
+<li><strong>Event type:</strong> Policy violation</li>
+<li><strong>Severity:</strong> High</li>
+<li><strong>Disposition:</strong> Blocked and held for review</li>
+<li><strong>Observed at:</strong> 2026-03-22 21:25 UTC</li>
+<li><strong>Source:</strong> gatekeeper/sentinel</li>
+<li><strong>Related rule:</strong> Rule R5</li>
+</ul>
+<h2 id=observed>Observed</h2>
+<p>A response under review contained an auth-token value in assistant output. The event was flagged as a credential-exposure risk and the exchange was held pending operator review.</p>
+<h2 id=evidence-references>Evidence references</h2>
+<ul>
+<li>Witness entry hash: <code>055609d94aff159d7e88d55987202b5512dbfcc3692d2e9a2937ee2ead6d5236</code></li>
+<li>Artifact reference: <code>gatekeeper-log/2026-03-22-lab.jsonl</code></li>
+<li>Rule reference: <code>rule-R5</code></li>
+</ul>
+<h2 id=control-action>Control action</h2>
+<ul>
+<li>outbound flow interrupted</li>
+<li>exchange marked for review</li>
+<li>event preserved in witness log</li>
+<li>follow-up remediation required before continuation</li>
+</ul>
+<h2 id=reviewer-notes>Reviewer notes</h2>
+<p>This example illustrates the intended reporting style:</p>
+<ul>
+<li>specific</li>
+<li>time-bounded</li>
+<li>source-attributed</li>
+<li>linked to a rule or policy decision</li>
+<li>clear about what action was taken</li>
+</ul>
+<p>It is not meant to expose private customer material. Public examples remain sanitized while preserving the reporting structure.</p>
+</article>
+</main>
+<footer class=site-footer>
+<p>© 2026 The Sentinel Project · AI-to-AI Firewall</p>
+<span class=sgail-mark>SENTINEL</span>
+</footer>
+</body>
+</html>

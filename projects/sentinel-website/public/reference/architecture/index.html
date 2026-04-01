@@ -1,0 +1,134 @@
+<!doctype html><html lang=en>
+<head>
+<meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Architecture Overview | The Sentinel Project</title>
+<meta name=description content="How Gatekeeper, Fair Witness, and reporting components fit together">
+<link rel=preconnect href=https://fonts.googleapis.com>
+<link rel=preconnect href=https://fonts.gstatic.com crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300&family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@300;400&display=swap" rel=stylesheet>
+<link rel=stylesheet href=/css/style.css>
+<link rel=icon type=image/svg+xml href=/images/favicon.svg>
+</head>
+<body>
+<div class=bg-orbs>
+<div class="orb orb-1"></div>
+<div class="orb orb-2"></div>
+<div class="orb orb-3"></div>
+<div class="orb orb-4"></div>
+</div>
+<header class=site-header>
+<nav class=nav>
+<a href=/ class=logo>Sentinel<span>Project</span> <span class=logo-sub>AI Firewall</span></a>
+<ul class=nav-links>
+<li><a href=/>Home</a></li>
+<li><a href=/agents/>Agents</a></li>
+<li><a href=/tools/>Tools</a></li>
+<li><a href=/reports/>Reports</a></li>
+<li><a href=/witness/>Witness</a></li>
+<li><a href=/about/>About</a></li>
+<li><a href=/reference/architecture/>Architecture</a></li>
+<li><a href=/reference/partner-brief/>Partner Brief</a></li>
+<li><a href=/certification/aidns/>Trust Framework</a></li>
+<li><a href=/reference/classification/>Risk Framework</a></li>
+<li><a href=/reference/pilot-intake/>Pilot Intake</a></li>
+<li><a href=/reference/maturity-matrix/>Maturity</a></li>
+</ul>
+<a class=nav-cta href=/contact/>Request Access</a>
+</nav>
+</header>
+<main class=main-content>
+<article>
+<header class=page-header>
+<h1>Architecture Overview</h1>
+<p>How Gatekeeper, Fair Witness, and reporting components fit together</p>
+</header>
+<p>This overview describes the current Sentinel architecture at a functional level. It is meant to clarify how the system verifies activity, applies policy, preserves evidence, and supports later review.</p>
+<h2 id=core-flow>Core flow</h2>
+<ol>
+<li><strong>An agent exchange or requested action occurs.</strong></li>
+<li><strong>Gatekeeper evaluates the event</strong> against explicit rules and trust boundaries.</li>
+<li><strong>A decision is made</strong>: allow, hold, block, or escalate.</li>
+<li><strong>Witness records are created</strong> with timestamps, source context, and supporting detail.</li>
+<li><strong>Evidence is preserved</strong> for operator review, remediation, or reporting.</li>
+</ol>
+<h2 id=components>Components</h2>
+<h3 id=1-gatekeeper>1. Gatekeeper</h3>
+<p>The enforcement layer.</p>
+<p>Gatekeeper sits at the trust boundary and monitors agent-to-agent or agent-to-tool activity. Its job is to:</p>
+<ul>
+<li>inspect requests and outputs</li>
+<li>apply explicit policy</li>
+<li>pause or block high-risk actions</li>
+<li>record the reason a rule was triggered</li>
+</ul>
+<h3 id=2-fair-witness>2. Fair Witness</h3>
+<p>The evidence and qualification layer.</p>
+<p>Fair Witness records what was observed, where it came from, when it was seen, and what remains uncertain. This supports:</p>
+<ul>
+<li>replayable review</li>
+<li>qualified reporting</li>
+<li>clearer separation of facts from interpretation</li>
+<li>defensible audit trails</li>
+</ul>
+<h3 id=3-telemetry-and-reporting>3. Telemetry and reporting</h3>
+<p>The operational layer.</p>
+<p>Selected events are summarized into dashboards, incident records, and review packets. Public summaries stay limited; protected evidence remains sealed.</p>
+<h2 id=example-decision-path>Example decision path</h2>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Question</th>
+<th>Output</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Observe</td>
+<td>What activity occurred?</td>
+<td>Timestamped event</td>
+</tr>
+<tr>
+<td>Evaluate</td>
+<td>Which rule or trust boundary applies?</td>
+<td>Policy decision</td>
+</tr>
+<tr>
+<td>Act</td>
+<td>Allow, hold, block, or escalate?</td>
+<td>Control action</td>
+</tr>
+<tr>
+<td>Record</td>
+<td>What evidence should be retained?</td>
+<td>Witness entry / artifact link</td>
+</tr>
+<tr>
+<td>Review</td>
+<td>What does the operator need to see next?</td>
+<td>Incident summary / remediation path</td>
+</tr>
+</tbody>
+</table>
+<h2 id=design-priorities>Design priorities</h2>
+<p>The architecture is optimized around five priorities:</p>
+<ul>
+<li><strong>verification</strong> — distinguish observed behavior from assumption</li>
+<li><strong>enforcement</strong> — intervene when a rule is crossed</li>
+<li><strong>evidence preservation</strong> — maintain usable records for later review</li>
+<li><strong>clarity</strong> — make system decisions understandable to operators and stakeholders</li>
+<li><strong>trust-material lifecycle control</strong> — support designs that reduce the persistence of compromised or stale trust artifacts over time</li>
+</ul>
+<p><img src=/images/architecture-overview.svg alt="Sentinel architecture overview"></p>
+<h2 id=current-posture>Current posture</h2>
+<p>Sentinel should be understood as a trust-and-safety control stack in active development. Some components are live, some are still in private alpha, and some remain in design or lab status. Public descriptions should stay aligned with what is actually deployed.</p>
+<p>For a concise buyer-facing summary, see the <a href=/reference/partner-brief/>Partner Brief</a>.</p>
+</article>
+</main>
+<footer class=site-footer>
+<p>© 2026 The Sentinel Project · AI-to-AI Firewall</p>
+<span class=sgail-mark>SENTINEL</span>
+</footer>
+</body>
+</html>

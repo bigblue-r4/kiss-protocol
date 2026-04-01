@@ -1,0 +1,3 @@
+[build]
+  publish = "projects/sentinel-website/public"
+  command = ""

@@ -1,0 +1,108 @@
+<!doctype html><html lang=en>
+<head>
+<meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Fair Witness Log | The Sentinel Project</title>
+<meta name=description content="The complete append-only record of AI system statements, observed behaviours, and security incidents witnessed by the Sentinel Gatekeeper. Every entry is hash-chained and timestamped — no post-hoc edits, no redaction.">
+<link rel=preconnect href=https://fonts.googleapis.com>
+<link rel=preconnect href=https://fonts.gstatic.com crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300&family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@300;400&display=swap" rel=stylesheet>
+<link rel=stylesheet href=/css/style.css>
+<link rel=icon type=image/svg+xml href=/images/favicon.svg>
+</head>
+<body>
+<div class=bg-orbs>
+<div class="orb orb-1"></div>
+<div class="orb orb-2"></div>
+<div class="orb orb-3"></div>
+<div class="orb orb-4"></div>
+</div>
+<header class=site-header>
+<nav class=nav>
+<a href=/ class=logo>Sentinel<span>Project</span> <span class=logo-sub>AI Firewall</span></a>
+<ul class=nav-links>
+<li><a href=/>Home</a></li>
+<li><a href=/agents/>Agents</a></li>
+<li><a href=/tools/>Tools</a></li>
+<li><a href=/reports/>Reports</a></li>
+<li><a href=/witness/>Witness</a></li>
+<li><a href=/about/>About</a></li>
+<li><a href=/reference/architecture/>Architecture</a></li>
+<li><a href=/reference/partner-brief/>Partner Brief</a></li>
+<li><a href=/certification/aidns/>Trust Framework</a></li>
+<li><a href=/reference/classification/>Risk Framework</a></li>
+<li><a href=/reference/pilot-intake/>Pilot Intake</a></li>
+<li><a href=/reference/maturity-matrix/>Maturity</a></li>
+</ul>
+<a class=nav-cta href=/contact/>Request Access</a>
+</nav>
+</header>
+<main class=main-content>
+<section class=page-header>
+<h1>Fair Witness Log</h1>
+<p>The complete append-only record of AI system statements, observed behaviours, and security incidents witnessed by the Sentinel Gatekeeper. Every entry is hash-chained and timestamped — no post-hoc edits, no redaction.</p>
+</section>
+<section class="fw-section fw-full-log">
+<header class=section-head>
+<div>
+<p class=section-label>Append-only · Hash-chained</p>
+<h2 class=section-title>4 entries on record.</h2>
+<p class=section-desc>Refreshed on each site build. Run <code>make demo-seed</code> from the workspace root to seed or refresh the log.</p>
+</div>
+</header>
+<div class=fw-card-list>
+<article class=fw-card>
+<div class=fw-card-meta>
+<span class=fw-type>INCIDENT</span>
+<span class=fw-source>gatekeeper/sentinel</span>
+<span class=fw-ts>2026-03-22 21:25 UTC</span>
+</div>
+<p class=fw-statement>Rule R5 triggered on SessionB: auth-token value present in assistant response. Credential exfiltration risk. Exchange held pending review. Severity: Critical.</p>
+<ul class=fw-artifacts>
+<li>gatekeeper-log/2026-03-22-lab.jsonl</li><li>rule-R5</li>
+</ul>
+<div class=fw-hash><code>055609d94aff159d7e88d55987202b5512dbfcc3692d2e9a2937ee2ead6d5236</code></div>
+</article>
+<article class=fw-card>
+<div class=fw-card-meta>
+<span class=fw-type>INCIDENT</span>
+<span class=fw-source>gatekeeper/sentinel</span>
+<span class=fw-ts>2026-03-22 20:25 UTC</span>
+</div>
+<p class=fw-statement>Rule R2-A triggered on SessionA: adversarial instruction-override pattern detected in user turn. Exchange held pending review. Severity: High.</p>
+<ul class=fw-artifacts>
+<li>gatekeeper-log/2026-03-22-lab.jsonl</li><li>rule-R2-A</li>
+</ul>
+<div class=fw-hash><code>6d6504b512a197534a72913ac62fd00078eb2f746cb08311b6668fe47a831c06</code></div>
+</article>
+<article class=fw-card>
+<div class=fw-card-meta>
+<span class=fw-type>OBSERVATION</span>
+<span class=fw-source>gatekeeper/sentinel</span>
+<span class=fw-ts>2026-03-22 19:25 UTC</span>
+</div>
+<p class=fw-statement>SessionC baseline captured: user request was benign document summary. No adversarial patterns matched (R2-A, R5 negative). Exchange logged as clean baseline.</p>
+<ul class=fw-artifacts>
+<li>gatekeeper-log/2026-03-22-lab.jsonl</li>
+</ul>
+<div class=fw-hash><code>d5d74b3f5e65469cdce399c0ea4c7e952cea67a0bf1def7f61a90fa2c7d0e67e</code></div>
+</article>
+<article class=fw-card>
+<div class=fw-card-meta>
+<span class=fw-type>SYSTEM</span>
+<span class=fw-source>fair-witness-log/service</span>
+<span class=fw-ts>2026-03-22 18:25 UTC</span>
+</div>
+<p class=fw-statement>Fair Witness log service initialised; hash chain genesis established. gRPC endpoint: 127.0.0.1:50060. NATS subscriber ready on sentinel.gatekeeper.> and sentinel.witness.entries.</p>
+<div class=fw-hash><code>befc2e296cd0e8ea0b7d6c125b47a6dca547949636b52c97f4d0581e495e24f5</code></div>
+</article>
+</div>
+<p class=fw-note>Hash-chained log — entries are append-only. <code>entry_hash</code> = SHA-256({ prev_hash, entry }). Refreshed on each site build.</p>
+</section>
+</main>
+<footer class=site-footer>
+<p>© 2026 The Sentinel Project · AI-to-AI Firewall</p>
+<span class=sgail-mark>SENTINEL</span>
+</footer>
+</body>
+</html>

@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Node
+node_modules/
+
+# Keys and secrets — never commit
+*.key
+*.pem
+*.p12
+ai_link_key.key
+shared_key.key
+
+# Hugo build artifacts (keep public/ — it's our deploy output)
+resources/_gen/
+
+# Netlify local state
+projects/sentinel-website/.netlify/
+
+# OpenClaw runtime
+.openclaw/
+
+# Misc
+*.log
+.DS_Store
+*.lock
+HEARTBEAT.md

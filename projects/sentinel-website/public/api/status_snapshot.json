@@ -1,0 +1,16 @@
+{
+  "banner_status": "Gatekeeper online — telemetry reconciled through 2026-03-22 09:51 UTC",
+  "stream_count": 3,
+  "latest_pipelock_incident": {
+    "timestamp": "2026-03-22 09:51 UTC",
+    "severity": "Critical",
+    "detail": "dlp — NATS integration verify — https://sentinelproject.ai"
+  },
+  "latest_witness_entry": {
+    "statement_type": "INCIDENT",
+    "statement": "Rule R5 triggered on SessionB: auth-token value present in assistant response. Credential exfiltration risk. Exchange he",
+    "observed_at": "2026-03-22 21:25 UTC",
+    "source": "gatekeeper/sentinel"
+  },
+  "generated_at": "2026-03-23T05:31:38Z"
+}
