@@ -30,3 +30,22 @@ projects/sentinel-website/.netlify/
 .DS_Store
 *.lock
 HEARTBEAT.md
+
+# Built binaries
+payload/witness/witness-linux-*
+payload/witness/witness-macos-*
+payload/pipelock/pipelock-linux-*
+payload/pipelock/pipelock-macos-*
+
+# Checksums (regenerated on build machine)
+VERIFY.txt
+
+# Go build artifacts
+*.test
+*.out
+/witness
+/pipelock
+
+# Local state
+.witness/
+.pipelock/

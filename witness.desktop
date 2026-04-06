@@ -1,0 +1,41 @@
+[Desktop Entry]
+Version=1.1
+Type=Application
+Name=Witness Client
+GenericName=Machine State Monitor
+Comment=Continuous cryptographic machine-state witness — logging, drift detection, three-tier backup
+Icon=security-high
+Exec=bash -c 'witness status; echo; printf "Press Enter to close..."; read'
+Terminal=true
+Categories=Security;System;Monitor;
+Keywords=witness;security;monitor;pipelock;sgail;log;drift;
+StartupNotify=false
+NoDisplay=false
+
+# Right-click actions in GNOME/KDE/etc.
+Actions=Status;StartDaemon;StopDaemon;EnableSync;ViewLog;
+
+[Desktop Action Status]
+Name=Show Status
+Exec=bash -c 'witness status; echo; printf "Press Enter..."; read'
+Terminal=true
+
+[Desktop Action StartDaemon]
+Name=Start Daemon
+Exec=bash -c 'echo "Starting witness daemon..."; witness start'
+Terminal=true
+
+[Desktop Action StopDaemon]
+Name=Stop Daemon
+Exec=bash -c 'pkill -TERM witness; echo "Sent SIGTERM to witness daemon."; sleep 1'
+Terminal=false
+
+[Desktop Action EnableSync]
+Name=Enable SGAIL Sync
+Exec=bash -c 'witness enable-sync'
+Terminal=true
+
+[Desktop Action ViewLog]
+Name=View Recent Log Entries
+Exec=bash -c 'witness status; echo; printf "Press Enter..."; read'
+Terminal=true
