@@ -31,6 +31,7 @@ import (
 	"github.com/luckyPipewrench/witness-client/internal/machid"
 	"github.com/luckyPipewrench/witness-client/internal/pipelock"
 	"github.com/luckyPipewrench/witness-client/internal/sgail"
+	"github.com/luckyPipewrench/witness-client/internal/soul"
 	"github.com/luckyPipewrench/witness-client/internal/store"
 )
 
@@ -76,6 +77,43 @@ Usage:
 // ── init ─────────────────────────────────────────────────────────────────────
 
 func cmdInit() {
+	// ── Soul file — load first, before anything else ──────────────────────
+	// The soul is the agent's immutable identity. If it fails verification,
+	// we halt here. Nothing happens until the soul is clean.
+	fmt.Println()
+	fmt.Println("  Loading soul file…")
+	if !soul.Exists() {
+		fmt.Println()
+		fmt.Println("  ╔══════════════════════════════════════════════════════════════╗")
+		fmt.Println("  ║  NO SOUL FILE FOUND                                          ║")
+		fmt.Println("  ║                                                              ║")
+		fmt.Println("  ║  Expected: ~/.witness/soul.toml                              ║")
+		fmt.Println("  ║                                                              ║")
+		fmt.Println("  ║  The installer should have placed this file.                 ║")
+		fmt.Println("  ║  If it is missing, re-run the USB installer.                 ║")
+		fmt.Println("  ╚══════════════════════════════════════════════════════════════╝")
+		fmt.Println()
+		os.Exit(1)
+	}
+	agentSoul, err := soul.Load(soul.Path())
+	if err != nil {
+		fmt.Println()
+		fmt.Println("  ╔══════════════════════════════════════════════════════════════╗")
+		fmt.Println("  ║  SOUL FILE INTEGRITY CHECK FAILED                            ║")
+		fmt.Println("  ║  This agent will not run.                                    ║")
+		fmt.Println("  ║  Do not proceed. Contact your administrator.                 ║")
+		fmt.Println("  ╚══════════════════════════════════════════════════════════════╝")
+		fmt.Printf("\n  Detail: %v\n\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("  Soul verified. Agent: %s %s (%s)\n",
+		agentSoul.Identity.AgentName,
+		agentSoul.Identity.AgentVersion,
+		agentSoul.Identity.Organization,
+	)
+	fmt.Printf("  Prime law: \"%s\"\n", agentSoul.PrimeLaw.Text)
+	fmt.Println()
+
 	mid := machid.Get()
 	cfg, err := config.Load(config.Path())
 	if err != nil {
@@ -171,13 +209,17 @@ func cmdInit() {
 	if !snap.Clean() {
 		genesisStatus = "COMPROMISED"
 	}
+	soulHash, _ := soul.Hash(soul.Path())
 	if err := s.Append("SYSTEM", "genesis", "witness-init", map[string]interface{}{
-		"machine_id":       mid,
-		"genesis_hash":     snap.Hash,
-		"genesis_ts":       snap.Timestamp,
-		"files_watched":    len(snap.Files),
-		"genesis_status":   genesisStatus,
+		"machine_id":        mid,
+		"genesis_hash":      snap.Hash,
+		"genesis_ts":        snap.Timestamp,
+		"files_watched":     len(snap.Files),
+		"genesis_status":    genesisStatus,
 		"agents_at_genesis": snap.AgentsAtGenesis,
+		"soul_hash":         soulHash,
+		"agent_name":        agentSoul.Identity.AgentName,
+		"agent_version":     agentSoul.Identity.AgentVersion,
 	}); err != nil {
 		fatal("write genesis log entry: %v", err)
 	}
