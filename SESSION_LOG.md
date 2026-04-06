@@ -20,6 +20,29 @@
 
 ## Log Entries
 
+### 2026-04-06 — USB tested, installer bug fixed, context system applied
+
+**What we did:** Tested USB installer end-to-end, found and fixed arch naming bug, verified clean install.
+Added CLAUDE.md/SESSION_LOG.md/MAP.md context management system to project tree.
+
+**Decisions made:**
+- Binary naming uses `amd64`/`arm64` — `uname -m` returns `x86_64` so detect_platform() must map to `amd64` not `x86_64`
+- `_core.sh` is not in payload/ so VERIFY.txt does not need regeneration when it changes
+- Context files (CLAUDE.md, SESSION_LOG.md) committed to repo — useful for any machine
+- Root CLAUDE.md and MAP.md placed at /home/evillab/ (auto-loaded by Claude Code)
+
+**Dead ends / don't repeat:**
+- ARCH="x86_64" breaks the installer — binaries are named amd64, not x86_64. Fixed.
+- Bash tool is non-TTY — pipe answers with `echo -e "Y\n1" |` to test interactive scripts
+
+**Left off at:** USB fully tested and working. Both binaries install and respond to --version.
+GitHub (bigblue-r4/kiss-protocol) is up to date on main.
+
+**Next step:** Build SGAIL server on the laptop — receives `/api/v1/witness/sync` and
+`/api/v1/witness/death` POST payloads, stores Fair Witness log, exposes `/api/v1/witness/ping`.
+
+---
+
 ### 2026-04-05 — v1 complete, USB built and pushed to GitHub
 
 **What we did:** Built the full Witness Client v1 from scratch — genesis snapshot, soul verification,
