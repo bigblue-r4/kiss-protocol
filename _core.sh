@@ -57,7 +57,7 @@ detect_platform() {
   esac
 
   case "$(uname -m)" in
-    x86_64|amd64) ARCH="x86_64" ;;
+    x86_64|amd64) ARCH="amd64" ;;
     arm64|aarch64) ARCH="arm64" ;;
     *) fail "Unsupported architecture: $(uname -m)." ;;
   esac
