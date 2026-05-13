@@ -92,10 +92,7 @@ go build ./...
 
 Remote sync is opt-in and disabled by default. Prefer the `WITNESS_SGAIL_TOKEN` environment variable over storing the token in `~/.witness/config.json`, which is readable by any process running as your user.
 
-## Website
 
-`projects/sentinel-website/` contains the static build output for
-[sentinelproject.ai](https://sentinelproject.ai), deployed via Netlify on push to main.
 
 ## License
 

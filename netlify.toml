@@ -1,5 +1,0 @@
-# Deploys projects/sentinel-website/ to sentinelproject.ai on every push to main.
-# The public/ directory is pre-built Hugo output committed to the repo.
-[build]
-  publish = "projects/sentinel-website/public"
-  command = ""
