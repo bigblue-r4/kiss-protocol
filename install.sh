@@ -65,7 +65,7 @@ require go
 require git
 
 GO_VERSION=$(go version | awk '{print $3}' | sed 's/go//')
-REQUIRED="1.21"
+REQUIRED="1.22"
 if [[ "$(printf '%s\n' "$REQUIRED" "$GO_VERSION" | sort -V | head -1)" != "$REQUIRED" ]]; then
     fatal "Go $REQUIRED+ required (found $GO_VERSION)"
 fi
@@ -100,11 +100,32 @@ else
     info "witness CLI installed → $INSTALL_DIR/witness"
 fi
 
-# ── Step 3: Genesis init ─────────────────────────────────────────────────────
+# ── Step 3: Install soul file ────────────────────────────────────────────────
+SOUL_DST="$HOME/.witness/soul.toml"
+if [[ -f "$SOUL_DST" ]]; then
+    info "Soul file already present — skipping."
+else
+    mkdir -p "$HOME/.witness"
+    # Prefer bundled copy from repo; fall back to fetching from GitHub.
+    if [[ -f "$SCRIPT_DIR/payload/witness/default-soul.toml" ]]; then
+        cp "$SCRIPT_DIR/payload/witness/default-soul.toml" "$SOUL_DST"
+        chmod 0400 "$SOUL_DST"
+        info "Soul file installed → $SOUL_DST"
+    else
+        SOUL_URL="https://raw.githubusercontent.com/bigblue-r4/kiss-protocol/main/payload/witness/default-soul.toml"
+        info "Fetching default soul file from GitHub…"
+        curl -fsSL "$SOUL_URL" -o "$SOUL_DST" \
+            || fatal "Could not fetch soul file. Clone the repo and run install.sh from it."
+        chmod 0400 "$SOUL_DST"
+        info "Soul file installed → $SOUL_DST"
+    fi
+fi
+
+# ── Step 4: Genesis init ─────────────────────────────────────────────────────
 info "Initializing witness (genesis snapshot)…"
 "$INSTALL_DIR/witness" init
 
-# ── Step 4: Optional SGAIL configuration ─────────────────────────────────────
+# ── Step 5: Optional SGAIL configuration ─────────────────────────────────────
 if [[ -n "$SGAIL_ENDPOINT" ]]; then
     info "Configuring SGAIL sync → $SGAIL_ENDPOINT"
     SGAIL_ARGS=(--endpoint "$SGAIL_ENDPOINT")
@@ -114,7 +135,7 @@ if [[ -n "$SGAIL_ENDPOINT" ]]; then
     "$INSTALL_DIR/witness" enable-sync "${SGAIL_ARGS[@]}"
 fi
 
-# ── Step 5: Install systemd service (Linux only) ─────────────────────────────
+# ── Step 6: Install systemd service (Linux only) ─────────────────────────────
 if [[ "$(uname -s)" == "Linux" ]] && command -v systemctl &>/dev/null; then
     info "Installing systemd service…"
     cat > "$SYSTEMD_DIR/witness.service" <<'SERVICE'
@@ -193,7 +214,7 @@ else
     warn "Could not detect init system. Start the daemon manually: witness start"
 fi
 
-# ── Step 6: Install desktop file ─────────────────────────────────────────────
+# ── Step 7: Install desktop file ─────────────────────────────────────────────
 if [[ "$(uname -s)" == "Linux" ]]; then
     DESKTOP_SRC="$SCRIPT_DIR/witness.desktop"
     if [[ -f "$DESKTOP_SRC" ]]; then
