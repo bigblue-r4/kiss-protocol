@@ -141,7 +141,7 @@ func cmdInit() {
 		fmt.Println()
 		fmt.Print("  Proceed anyway? The genesis will be flagged [AGENTS_PRESENT]. [y/N]: ")
 		var confirm string
-		fmt.Scanln(&confirm)
+		_, _ = fmt.Scanln(&confirm)
 		if strings.ToLower(strings.TrimSpace(confirm)) != "y" {
 			fmt.Println()
 			fmt.Println("  Correct approach:")
