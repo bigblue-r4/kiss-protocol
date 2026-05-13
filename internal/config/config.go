@@ -1,4 +1,4 @@
-// Package config manages witness-client configuration.
+// Package config manages witness configuration.
 // NOTE: Secondary and tertiary backup paths are intentionally NOT stored here.
 // Secondary is fixed at a hidden system path.
 // Tertiary is derived at runtime from machine identity — it never appears in any file.

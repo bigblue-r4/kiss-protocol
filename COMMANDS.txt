@@ -1,4 +1,4 @@
-WITNESS CLIENT — QUICK COMMAND REFERENCE
+SGAIL LABS HARBORLIGHT FIREWALL — QUICK COMMAND REFERENCE
 ════════════════════════════════════════════════════════════
 
 FRESH MACHINE SETUP (run before any AI agent)
@@ -17,7 +17,7 @@ DAILY COMMANDS
   witness init          Take genesis snapshot (clean machine only)
   witness start         Start continuous monitoring daemon
   witness status        Show genesis trust level + log stats
-  witness enable-sync   Configure remote SGAIL sync (opt-in)
+  witness enable-sync   Configure remote SGAIL Labs sync (opt-in)
 
 
 SYSTEMD (runs as a service after setup)
@@ -49,7 +49,7 @@ GENESIS TRUST LEVELS
 GITHUB
 ──────────────────────────────────────────────
   https://github.com/bigblue-r4/kiss-protocol
-  Source: projects/witness-client/
+  Public name: SGAIL Labs Harborlight Firewall
 
 
 RULE

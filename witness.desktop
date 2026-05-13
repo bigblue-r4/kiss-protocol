@@ -1,9 +1,9 @@
 [Desktop Entry]
 Version=1.1
 Type=Application
-Name=Witness Client
+Name=SGAIL Labs Harborlight Firewall
 GenericName=Machine State Monitor
-Comment=Continuous cryptographic machine-state witness — logging, drift detection, three-tier backup
+Comment=Continuous cryptographic machine-state witness for the SGAIL Labs Harborlight Firewall stack
 Icon=security-high
 Exec=bash -c 'witness status; echo; printf "Press Enter to close..."; read'
 Terminal=true
@@ -31,7 +31,7 @@ Exec=bash -c 'pkill -TERM witness; echo "Sent SIGTERM to witness daemon."; sleep
 Terminal=false
 
 [Desktop Action EnableSync]
-Name=Enable SGAIL Sync
+Name=Enable SGAIL Labs Sync
 Exec=bash -c 'witness enable-sync'
 Terminal=true
 

@@ -21,18 +21,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/luckyPipewrench/witness-client/internal/anomaly"
-	"github.com/luckyPipewrench/witness-client/internal/backup"
-	"github.com/luckyPipewrench/witness-client/internal/config"
-	"github.com/luckyPipewrench/witness-client/internal/death"
-	"github.com/luckyPipewrench/witness-client/internal/drift"
-	"github.com/luckyPipewrench/witness-client/internal/encrypt"
-	"github.com/luckyPipewrench/witness-client/internal/genesis"
-	"github.com/luckyPipewrench/witness-client/internal/machid"
-	"github.com/luckyPipewrench/witness-client/internal/pipelock"
-	"github.com/luckyPipewrench/witness-client/internal/sgail"
-	"github.com/luckyPipewrench/witness-client/internal/soul"
-	"github.com/luckyPipewrench/witness-client/internal/store"
+	"github.com/bigblue-r4/kiss-protocol/internal/anomaly"
+	"github.com/bigblue-r4/kiss-protocol/internal/backup"
+	"github.com/bigblue-r4/kiss-protocol/internal/config"
+	"github.com/bigblue-r4/kiss-protocol/internal/death"
+	"github.com/bigblue-r4/kiss-protocol/internal/drift"
+	"github.com/bigblue-r4/kiss-protocol/internal/encrypt"
+	"github.com/bigblue-r4/kiss-protocol/internal/genesis"
+	"github.com/bigblue-r4/kiss-protocol/internal/machid"
+	"github.com/bigblue-r4/kiss-protocol/internal/pipelock"
+	"github.com/bigblue-r4/kiss-protocol/internal/sgail"
+	"github.com/bigblue-r4/kiss-protocol/internal/soul"
+	"github.com/bigblue-r4/kiss-protocol/internal/store"
 )
 
 const version = "1.0.0"
@@ -54,7 +54,7 @@ func main() {
 	case "watchdog":
 		cmdWatchdog()
 	case "version", "--version", "-v":
-		fmt.Println("witness-client v" + version)
+		fmt.Println("SGAIL Labs Harborlight Firewall witness v" + version)
 	default:
 		usage()
 		os.Exit(1)
@@ -62,13 +62,13 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `witness-client v%s
+	fmt.Fprintf(os.Stderr, `SGAIL Labs Harborlight Firewall witness v%s
 
 Usage:
   witness init             Take genesis snapshot, initialize three-tier log storage
   witness start            Start the continuous witness daemon
   witness status           Show current witness status
-  witness enable-sync      Configure opt-in SGAIL remote sync
+  witness enable-sync      Configure opt-in SGAIL Labs remote sync
   witness version          Print version
 
 `, version)
@@ -702,4 +702,3 @@ func fatal(format string, args ...interface{}) {
 func warn(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "[witness] WARN: "+format+"\n", args...)
 }
-

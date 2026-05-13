@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ══════════════════════════════════════════════════════════════════════════════
-#  WITNESS + PIPELOCK — USB SETUP SCRIPT
+#  SGAIL LABS HARBORLIGHT FIREWALL — USB SETUP SCRIPT
 #  Run this on a CLEAN machine BEFORE installing any AI agents.
 #
 #  Usage:
@@ -11,7 +11,7 @@
 #  What it does:
 #    1. Installs system dependencies (Go, git, build tools)
 #    2. Installs Pipelock
-#    3. Installs Witness Client
+#    3. Installs the SGAIL Labs Harborlight Firewall witness CLI
 #    4. Runs genesis init (captures clean machine state)
 #    5. Installs systemd service + desktop shortcut
 #    6. Optionally configures SGAIL remote sync
@@ -29,7 +29,7 @@ GO_URL="https://go.dev/dl/go${GO_VERSION}.${GO_ARCH}.tar.gz"
 
 PIPELOCK_REPO="github.com/luckyPipewrench/pipelock/cmd/pipelock@latest"
 WITNESS_REPO="https://github.com/bigblue-r4/kiss-protocol.git"
-WITNESS_SUBDIR="projects/witness-client"
+WITNESS_SUBDIR="."
 
 INSTALL_BIN="/usr/local/bin"
 SYSTEMD_DIR="/etc/systemd/system"
@@ -61,7 +61,7 @@ REAL_USER="${SUDO_USER:-$(logname 2>/dev/null || echo root)}"
 REAL_HOME=$(eval echo "~$REAL_USER")
 
 hr
-echo -e "${BOLD}  WITNESS + PIPELOCK SETUP${NC}"
+echo -e "${BOLD}  SGAIL LABS HARBORLIGHT FIREWALL SETUP${NC}"
 echo    "  Machine-state witness. Install before any AI agent."
 hr
 echo
@@ -137,8 +137,8 @@ else
     fi
 fi
 
-# ── Step 4: Get witness-client source ─────────────────────────────────────────
-info "Getting witness-client source…"
+# ── Step 4: Get witness source ────────────────────────────────────────────────
+info "Getting SGAIL Labs Harborlight Firewall source…"
 BUILD_DIR="/tmp/witness-build-$$"
 mkdir -p "$BUILD_DIR"
 
@@ -147,11 +147,11 @@ USB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ "$OFFLINE" == "true" ]] || [[ -f "$USB_DIR/go.mod" ]]; then
     # Running from inside the repo (USB has the source)
     info "Using local source from USB…"
-    cp -r "$USB_DIR" "$BUILD_DIR/witness-client"
-    WITNESS_SRC="$BUILD_DIR/witness-client"
+    cp -r "$USB_DIR" "$BUILD_DIR/harborlight-firewall"
+    WITNESS_SRC="$BUILD_DIR/harborlight-firewall"
 elif [[ -d "$USB_DIR/../go.mod" ]]; then
-    cp -r "$USB_DIR/.." "$BUILD_DIR/witness-client"
-    WITNESS_SRC="$BUILD_DIR/witness-client"
+    cp -r "$USB_DIR/.." "$BUILD_DIR/harborlight-firewall"
+    WITNESS_SRC="$BUILD_DIR/harborlight-firewall"
 else
     # Pull from GitHub
     info "Cloning from GitHub…"
@@ -192,7 +192,7 @@ fi
 info "Installing systemd service…"
 cat > "$SYSTEMD_DIR/witness.service" <<SERVICE
 [Unit]
-Description=Witness Client — machine-state monitor (install before AI agents)
+Description=SGAIL Labs Harborlight Firewall — machine-state monitor (install before AI agents)
 After=network.target
 StartLimitIntervalSec=60
 StartLimitBurst=5
@@ -218,19 +218,19 @@ info "To start now: systemctl start witness"
 DESKTOP_DIR="$REAL_HOME/Desktop"
 if [[ -d "$DESKTOP_DIR" ]]; then
     info "Creating desktop folder…"
-    DEST="$DESKTOP_DIR/Witness Client"
+    DEST="$DESKTOP_DIR/SGAIL Labs Harborlight Firewall"
     mkdir -p "$DEST"
 
     cat > "$DEST/▶ Start Witness.sh" <<'SH'
 #!/bin/bash
-echo "Starting Witness daemon..."
+echo "Starting SGAIL Labs Harborlight Firewall witness daemon..."
 witness start
 SH
 
     cat > "$DEST/📊 Status.sh" <<'SH'
 #!/bin/bash
 echo "════════════════════════════════════"
-echo "  WITNESS STATUS"
+echo "  SGAIL HARBORLIGHT STATUS"
 echo "════════════════════════════════════"
 witness status
 echo
@@ -244,14 +244,14 @@ pkill -TERM witness 2>/dev/null && echo "Shutdown signal sent — death broadcas
 sleep 1
 SH
 
-    cat > "$DEST/📁 Open Source.sh" <<SH
+    cat > "$DEST/📁 Open Config.sh" <<SH
 #!/bin/bash
-xdg-open /home/$REAL_USER/witness-client 2>/dev/null || nautilus /home/$REAL_USER/witness-client 2>/dev/null || true
+xdg-open /home/$REAL_USER/.witness 2>/dev/null || nautilus /home/$REAL_USER/.witness 2>/dev/null || true
 SH
 
     cat > "$DEST/README.txt" <<README
-WITNESS CLIENT
-══════════════
+SGAIL LABS HARBORLIGHT FIREWALL
+═══════════════════════════════
 Install before any AI agent. Always.
 
 Order:

@@ -1,4 +1,4 @@
-module github.com/luckyPipewrench/witness-client
+module github.com/bigblue-r4/kiss-protocol
 
 go 1.21
 

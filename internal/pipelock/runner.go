@@ -17,7 +17,7 @@ import (
 	"text/template"
 )
 
-const configTemplate = `# Witness Client — generated Pipelock config (audit mode)
+const configTemplate = `# SGAIL Labs Harborlight Firewall — generated Pipelock config (audit mode)
 # Do not edit manually; regenerated on every 'witness init'.
 
 proxy:

@@ -1,5 +1,5 @@
 BINARY   := witness
-MODULE   := github.com/luckyPipewrench/witness-client
+MODULE   := github.com/bigblue-r4/kiss-protocol
 CMD      := ./cmd/witness
 GOFLAGS  := -trimpath -ldflags="-s -w"
 

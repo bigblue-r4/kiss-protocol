@@ -5,12 +5,12 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/luckyPipewrench/witness-client/internal/genesis"
+	"github.com/bigblue-r4/kiss-protocol/internal/genesis"
 )
 
 // Change describes a single detected deviation from genesis.
 type Change struct {
-	Type    string `json:"type"`              // file_changed, file_removed, file_mode_changed, new_process
+	Type    string `json:"type"` // file_changed, file_removed, file_mode_changed, new_process
 	Path    string `json:"path,omitempty"`
 	Process string `json:"process,omitempty"`
 	Old     string `json:"old,omitempty"`

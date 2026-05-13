@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/luckyPipewrench/witness-client/internal/encrypt"
+	"github.com/bigblue-r4/kiss-protocol/internal/encrypt"
 )
 
 // Entry is one log record.

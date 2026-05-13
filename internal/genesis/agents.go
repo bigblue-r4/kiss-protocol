@@ -47,10 +47,10 @@ type AgentIndicator struct {
 
 // AgentPresence is one detected agent at genesis.
 type AgentPresence struct {
-	Name   string `json:"name"`
-	Type   string `json:"type"`
-	Path   string `json:"path"`
-	Found  string `json:"found"` // resolved path or version
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Path  string `json:"path"`
+	Found string `json:"found"` // resolved path or version
 }
 
 // ScanForAgents checks for known AI agent indicators on this machine.

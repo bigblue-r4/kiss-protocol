@@ -26,8 +26,8 @@ const (
 
 // Event describes a detected anomaly.
 type Event struct {
-	Kind    Kind   `json:"kind"`
-	Detail  string `json:"detail"`
+	Kind   Kind   `json:"kind"`
+	Detail string `json:"detail"`
 }
 
 // Detector watches for storage and network anomalies.

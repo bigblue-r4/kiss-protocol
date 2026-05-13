@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# install.sh — Witness Client installer
+# install.sh — SGAIL Labs Harborlight Firewall installer
 #
-# Installs Pipelock, then witness-client, then runs genesis init.
+# Installs Pipelock, then the witness CLI, then runs genesis init.
 # Requires: Go 1.21+, git, curl
 # Run as root or with sudo for full three-tier backup support.
 #
@@ -29,7 +29,7 @@ set -euo pipefail
 # ══════════════════════════════════════════════════════════════════════════════
 
 PIPELOCK_REPO="github.com/luckyPipewrench/pipelock/cmd/pipelock@latest"
-WITNESS_REPO="github.com/luckyPipewrench/witness-client/cmd/witness"
+WITNESS_REPO="github.com/bigblue-r4/kiss-protocol/cmd/witness"
 
 INSTALL_DIR="/usr/local/bin"
 SYSTEMD_DIR="/etc/systemd/system"
@@ -80,8 +80,8 @@ else
     info "Pipelock installed → $INSTALL_DIR/pipelock"
 fi
 
-# ── Step 2: Build and install witness-client ─────────────────────────────────
-info "Building witness-client…"
+# ── Step 2: Build and install witness CLI ────────────────────────────────────
+info "Building SGAIL Labs Harborlight Firewall witness CLI…"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -92,12 +92,12 @@ if [[ -f "$SCRIPT_DIR/go.mod" ]]; then
     go build -trimpath -ldflags="-s -w" -o witness ./cmd/witness
     install -m 0755 witness "$INSTALL_DIR/witness"
     rm -f witness
-    info "witness-client built from source → $INSTALL_DIR/witness"
+    info "witness CLI built from source → $INSTALL_DIR/witness"
 else
     # Fall back to go install from the module registry.
     GOBIN="$INSTALL_DIR" go install "${WITNESS_REPO}@latest" \
-        || fatal "Failed to install witness-client."
-    info "witness-client installed → $INSTALL_DIR/witness"
+        || fatal "Failed to install witness CLI."
+    info "witness CLI installed → $INSTALL_DIR/witness"
 fi
 
 # ── Step 3: Genesis init ─────────────────────────────────────────────────────
@@ -119,7 +119,7 @@ if [[ "$(uname -s)" == "Linux" ]] && command -v systemctl &>/dev/null; then
     info "Installing systemd service…"
     cat > "$SYSTEMD_DIR/witness.service" <<'SERVICE'
 [Unit]
-Description=Witness Client — machine-state continuous monitor
+Description=SGAIL Labs Harborlight Firewall — machine-state continuous monitor
 After=network.target
 StartLimitIntervalSec=60
 StartLimitBurst=5
@@ -143,7 +143,7 @@ SERVICE
     # Watchdog gets its own service so it can outlive the main service.
     cat > "$SYSTEMD_DIR/witness-watchdog.service" <<'SERVICE'
 [Unit]
-Description=Witness Client Watchdog
+Description=SGAIL Labs Harborlight Firewall Watchdog
 After=witness.service
 BindsTo=witness.service
 
@@ -166,7 +166,7 @@ SERVICE
 
 elif [[ "$(uname -s)" == "Darwin" ]]; then
     # macOS: launchd
-    PLIST="$HOME/Library/LaunchAgents/com.witness-client.plist"
+    PLIST="$HOME/Library/LaunchAgents/ai.sgail.harborlight.witness.plist"
     info "Installing launchd agent → $PLIST"
     cat > "$PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -174,7 +174,7 @@ elif [[ "$(uname -s)" == "Darwin" ]]; then
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>Label</key>             <string>com.witness-client</string>
+    <key>Label</key>             <string>ai.sgail.harborlight.witness</string>
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/bin/witness</string>
@@ -220,8 +220,8 @@ fi
 # ── Done ─────────────────────────────────────────────────────────────────────
 echo ""
 echo "╔═══════════════════════════════════════════════════════════╗"
-echo "║  Witness Client installed successfully.                   ║"
+echo "║  SGAIL Labs Harborlight Firewall installed.               ║"
 echo "║                                                           ║"
 echo "║  witness status        — view current state               ║"
-echo "║  witness enable-sync   — opt in to SGAIL remote sync      ║"
+echo "║  witness enable-sync   — opt in to SGAIL Labs sync        ║"
 echo "╚═══════════════════════════════════════════════════════════╝"

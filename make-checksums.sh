@@ -17,7 +17,7 @@ if [[ ! -d "$PAYLOAD_DIR" ]]; then
   exit 1
 fi
 
-echo "# Harborlight USB Installer — Payload Checksums"   > "$OUT_FILE"
+echo "# SGAIL Labs Harborlight Firewall USB Installer — Payload Checksums"   > "$OUT_FILE"
 echo "# Generated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$OUT_FILE"
 echo "# DO NOT EDIT — regenerate with make-checksums.sh" >> "$OUT_FILE"
 echo ""                                                   >> "$OUT_FILE"

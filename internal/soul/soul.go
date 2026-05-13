@@ -34,19 +34,19 @@ type Soul struct {
 }
 
 type Identity struct {
-	AgentName   string `toml:"agent_name"`
-	AgentVersion string `toml:"agent_version"`
-	Organization string `toml:"organization"`
+	AgentName     string `toml:"agent_name"`
+	AgentVersion  string `toml:"agent_version"`
+	Organization  string `toml:"organization"`
 	ProductFamily string `toml:"product_family"`
-	Role        string `toml:"role"`
-	InstanceID  string `toml:"instance_id"`
-	SoulLocked  bool   `toml:"soul_locked"`
+	Role          string `toml:"role"`
+	InstanceID    string `toml:"instance_id"`
+	SoulLocked    bool   `toml:"soul_locked"`
 }
 
 type PrimeLaw struct {
-	Text               string `toml:"text"`
-	OverridePermitted  bool   `toml:"override_permitted"`
-	EscalateOnViolation bool  `toml:"escalate_on_violation"`
+	Text                string `toml:"text"`
+	OverridePermitted   bool   `toml:"override_permitted"`
+	EscalateOnViolation bool   `toml:"escalate_on_violation"`
 }
 
 type Boundaries struct {
@@ -63,9 +63,9 @@ type Logging struct {
 }
 
 type Escalation struct {
-	Thresholds  EscalationThresholds  `toml:"thresholds"`
-	TickSources map[string]int        `toml:"tick_sources"`
-	Actions     EscalationActions     `toml:"actions"`
+	Thresholds  EscalationThresholds `toml:"thresholds"`
+	TickSources map[string]int       `toml:"tick_sources"`
+	Actions     EscalationActions    `toml:"actions"`
 }
 
 type EscalationThresholds struct {
@@ -81,18 +81,18 @@ type EscalationActions struct {
 }
 
 type Integrity struct {
-	SoulHash       string `toml:"soul_hash"`
-	VerifyOnLoad   bool   `toml:"verify_on_load"`
-	HaltOnMismatch bool   `toml:"halt_on_mismatch"`
+	SoulHash        string `toml:"soul_hash"`
+	VerifyOnLoad    bool   `toml:"verify_on_load"`
+	HaltOnMismatch  bool   `toml:"halt_on_mismatch"`
 	MismatchMessage string `toml:"mismatch_message"`
 }
 
 type Forge struct {
-	ForgedBy   string `toml:"forged_by"`
+	ForgedBy    string `toml:"forged_by"`
 	ForgeMethod string `toml:"forge_method"`
-	ForgeDate  string `toml:"forge_date"`
-	ForgedFrom string `toml:"forged_from"`
-	Notes      string `toml:"notes"`
+	ForgeDate   string `toml:"forge_date"`
+	ForgedFrom  string `toml:"forged_from"`
+	Notes       string `toml:"notes"`
 }
 
 // Load reads and verifies the soul file at path.

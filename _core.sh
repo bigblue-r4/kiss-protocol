@@ -25,7 +25,7 @@ DEFAULT_INSTALL_DIR="$HOME/.local/bin"
 SYSTEM_INSTALL_DIR="/usr/local/bin"
 INSTALL_DIR=""
 
-LOG_FILE="/tmp/harborlight-install-$(date +%Y%m%d-%H%M%S).log"
+LOG_FILE="/tmp/sgail-harborlight-install-$(date +%Y%m%d-%H%M%S).log"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 log()  { echo -e "$*" | tee -a "$LOG_FILE"; }
@@ -38,7 +38,7 @@ fail() { log "${RED}  ✗ ERROR:${RESET} $*"; exit 1; }
 print_banner() {
   echo -e "${BOLD}"
   echo "  ╔══════════════════════════════════════════╗"
-  echo "  ║        HARBORLIGHT INSTALLER             ║"
+  echo "  ║  SGAIL LABS HARBORLIGHT FIREWALL         ║"
   echo "  ║     Witness  +  Pipelock                 ║"
   echo "  ║     Offline Install — No Internet Needed ║"
   echo "  ╚══════════════════════════════════════════╝"
@@ -217,7 +217,7 @@ update_path() {
   for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
     if [[ -f "$rc" ]] && ! grep -q ".local/bin" "$rc" 2>/dev/null; then
       echo "" >> "$rc"
-      echo "# Added by Harborlight installer" >> "$rc"
+      echo "# Added by SGAIL Labs Harborlight installer" >> "$rc"
       echo "$path_line" >> "$rc"
       ok "Added ~/.local/bin to PATH in $rc"
       added=true

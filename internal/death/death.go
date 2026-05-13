@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/luckyPipewrench/witness-client/internal/sgail"
+	"github.com/bigblue-r4/kiss-protocol/internal/sgail"
 )
 
 const broadcastDeadline = 8 * time.Second

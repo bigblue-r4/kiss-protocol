@@ -1,4 +1,4 @@
-HARBORLIGHT — Witness + Pipelock
+SGAIL Labs Harborlight Firewall
 USB Installer
 ================================
 
@@ -55,7 +55,7 @@ Both should print their version numbers. If you see
 
 ── SOMETHING WRONG? ─────────────────────────────────
 
-The installer saves a log file to:  /tmp/harborlight-install-[date].log
+The installer saves a log file to:  /tmp/sgail-harborlight-install-[date].log
 
 Send that file to whoever gave you this USB stick.
 
