@@ -13,6 +13,8 @@ node_modules/
 *.key
 *.pem
 *.p12
+*.env
+.env*
 ai_link_key.key
 shared_key.key
 

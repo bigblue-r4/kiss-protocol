@@ -9,9 +9,9 @@ import (
 )
 
 // tertiarySecret is the HMAC key used to derive the tertiary backup path.
-// This value is embedded in the binary only — it never appears in any config
-// or log file. The derived path is deterministic per machine but opaque to
-// any observer who does not have the source code.
+// This value is public (source is open). The path is still machine-specific
+// because the machine ID is the HMAC input — an attacker needs the machine ID
+// to compute the path, not just the source.
 const tertiarySecret = "w1tn3ss-t3rt14ry-s3cr3t-2026"
 
 // TertiaryDir derives the tertiary backup directory from the machine ID.
