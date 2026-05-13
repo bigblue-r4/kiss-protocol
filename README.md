@@ -39,9 +39,33 @@ go test ./...
 go build ./...
 ```
 
+## SGAIL remote sync (optional)
+
+Remote sync is opt-in. To enable it, run:
+
+```bash
+witness enable-sync --endpoint https://your-sgail-server:8443
+```
+
+The auth token can be provided interactively or via environment variable:
+
+```bash
+export WITNESS_SGAIL_TOKEN=your-token
+witness enable-sync --endpoint https://your-sgail-server:8443
+```
+
+**Prefer the environment variable over storing the token in config.** The config
+file at `~/.witness/config.json` is readable by any process running as your user.
+The env var keeps the token out of the filesystem.
+
 ## Repository notes
 
 The public cleanup is in progress. This pass standardizes the public-facing name around SGAIL Labs Harborlight Firewall while keeping code paths stable.
+
+## Website
+
+`projects/sentinel-website/` contains the static build output for
+[sentinelproject.ai](https://sentinelproject.ai), deployed via Netlify on push to main.
 
 ## License
 
