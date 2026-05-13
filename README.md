@@ -4,20 +4,11 @@ SGAIL Labs Harborlight Firewall is a witness-oriented AI security project center
 
 This repository contains the `witness` CLI, the Harborlight install assets, and related support files. The project grew out of incident response work in which AI agents on a host were compromised while the witness log remained intact.
 
-## Status
-
-This codebase is being prepared for public release. The current cleanup pass focuses on:
-
-- stable module and import paths
-- reproducible builds and CI
-- public documentation
-- removal of private operator notes and duplicate source trees
-
 ## Public naming
 
 The public name for this stack is **SGAIL Labs Harborlight Firewall**.
 
-For compatibility, the main binary name remains `witness`, and the current repository path remains `github.com/bigblue-r4/kiss-protocol` until the public release rename is completed.
+The main binary is `witness`. The Go module path is `github.com/bigblue-r4/kiss-protocol`.
 
 ## What is here
 
@@ -57,10 +48,6 @@ witness enable-sync --endpoint https://your-sgail-server:8443
 **Prefer the environment variable over storing the token in config.** The config
 file at `~/.witness/config.json` is readable by any process running as your user.
 The env var keeps the token out of the filesystem.
-
-## Repository notes
-
-The public cleanup is in progress. This pass standardizes the public-facing name around SGAIL Labs Harborlight Firewall while keeping code paths stable.
 
 ## Website
 
