@@ -469,7 +469,7 @@ func (s *server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(dashboardHTML)
+	_, _ = w.Write(dashboardHTML)
 }
 
 func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
