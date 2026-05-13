@@ -121,7 +121,7 @@ escalate_if_unresolved = true
 # =============================================================================
 
 [integrity]
-soul_hash         = ""   # populated by make-checksums.sh at build time
+soul_hash         = "8f9d573daa0d03bce16b520b53b157988edb2060fd075d2f40d8493103b5deb9"   # populated by make-checksums.sh at build time
 verify_on_load    = true
 halt_on_mismatch  = true
 mismatch_message  = "Soul file integrity check failed. This agent will not run. Do not proceed. Contact your administrator."
@@ -135,6 +135,6 @@ mismatch_message  = "Soul file integrity check failed. This agent will not run. 
 [forge]
 forged_by         = "SGAIL"
 forge_method      = "manual"      # manual | Project_Forge_simulation
-forge_date        = ""            # filled at build time
+forge_date        = "2026-05-13"            # filled at build time
 forged_from       = "scratch"     # scratch | re-forged | cloned
 notes             = "Default soul for fresh Witness installs. Customize before deployment."

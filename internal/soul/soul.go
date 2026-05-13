@@ -9,6 +9,7 @@
 package soul
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -166,18 +167,47 @@ func Hash(path string) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
+// verify checks the soul file's integrity hash.
+// It blanks the soul_hash field before hashing so the stored value is stable —
+// otherwise the hash would change every time soul_hash is written.
 func verify(data []byte, expected string) error {
 	if expected == "" {
-		// Not yet hashed (fresh from installer before make-checksums ran).
-		// Allow on first init only.
+		// Not yet stamped — allow on first init.
 		return nil
 	}
-	sum := sha256.Sum256(data)
+	sum := sha256.Sum256(zeroSoulHash(data))
 	actual := hex.EncodeToString(sum[:])
 	if actual != expected {
 		return fmt.Errorf("soul hash mismatch: expected %s got %s", expected, actual)
 	}
 	return nil
+}
+
+// zeroSoulHash returns a copy of the raw TOML bytes with the soul_hash value
+// replaced by an empty string, so the file can be hashed without a circular
+// dependency on the field that stores the hash.
+func zeroSoulHash(data []byte) []byte {
+	lines := bytes.SplitAfter(data, []byte("\n"))
+	for i, line := range lines {
+		if !bytes.HasPrefix(bytes.TrimSpace(line), []byte("soul_hash")) {
+			continue
+		}
+		first := bytes.IndexByte(line, '"')
+		if first < 0 {
+			continue
+		}
+		second := bytes.IndexByte(line[first+1:], '"')
+		if second < 0 {
+			continue
+		}
+		second += first + 1
+		cleared := make([]byte, 0, len(line))
+		cleared = append(cleared, line[:first+1]...)  // up to and including opening "
+		cleared = append(cleared, '"')                // immediate closing "
+		cleared = append(cleared, line[second+1:]...) // rest of line (comment etc.)
+		lines[i] = cleared
+	}
+	return bytes.Join(lines, nil)
 }
 
 func expandHome(path string) string {
