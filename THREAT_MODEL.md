@@ -4,7 +4,9 @@
 
 ## Scope
 
-What Witness is, in one paragraph. What it is not.
+Witness is a tamper-evident machine-state daemon that runs continuously on an AI-agent host. It takes a cryptographic snapshot of the machine before any agent is installed (genesis), then continuously logs drift, pipelock audit events, and anomalies to an append-only, hash-chained encrypted log. If the daemon is killed unexpectedly it broadcasts its log to redundant locations and — optionally — to a remote server, so that any post-incident investigation has a tamper-evident record of what happened, to whom, and when.
+
+Witness is not a firewall, not a runtime sandbox, not an IDS/IPS, and not a confidentiality tool. It does not prevent agents from acting; it creates a verifiable record of what happened. It does not protect payload contents — operators who need secrecy must encrypt payloads before submission. It does not guarantee availability; it witnesses, it does not defend.
 
 ## Assets being protected
 
@@ -54,8 +56,8 @@ For each attacker capability above, state what Witness guarantees and by what me
 
 ## Trust roots
 
-- **Signer pubkey allowlist** — a small file shipped alongside the binary, listing the public keys whose signatures the daemon will accept on the soul file and on peer messages. The integrity of this file is the bootstrap trust root. Document where it lives, who may modify it, and how.
-- **Reproducible-build attestation** — operators verify the binary they run matches a published artifact hash signed by the release key. Document the verification command.
+- **Signer pubkey allowlist** — `~/.witness/trust/signers.txt` (one ed25519 pubkey per line, with operator-assigned label). Created by the installer; placed by a human before `witness init`. Never network-fetched, never auto-updated. Owned by the `witness` system user, mode 0400. A compromised allowlist means a compromised daemon — this is the bootstrap trust root, and its integrity cannot be verified from within the system it protects. Operators must verify it out-of-band (e.g., compare checksum against a trusted copy at setup time).
+- **Reproducible-build attestation** — operators verify the binary they run matches a published artifact hash signed by the release key. Verification command (Phase 7): `cosign verify-blob --key witness-release.pub --signature witness_linux_amd64.sig witness_linux_amd64`
 
 ## Operational assumptions
 
@@ -67,6 +69,6 @@ For each attacker capability above, state what Witness guarantees and by what me
 
 > Things this document cannot yet answer. Resolve before Phase 1 sign-off.
 
-1. 
-2. 
-3. 
+1. **Gossip trust bootstrap (Phase 4 pre-req):** How does a node verify a peer's identity on first contact? Options: (a) pre-shared pubkey exchange out-of-band, added to allowlist before `witness peer add`; (b) TOFU with a "first-contact" log entry and manual confirmation; (c) require allowlist entry before any peering is accepted. Must be decided before Phase 4 to avoid locking in a weaker model.
+2. **seccomp profile completeness (Phase 3 pre-req):** The generated seccomp profile is derived from observed syscalls during integration tests. The death-broadcast path (parallel file writes, SGAIL HTTP under short deadline) and the watchdog subprocess spawn exercise syscalls that may not appear in happy-path tests. The profile must cover error and shutdown paths before defaulting on — otherwise a kill signal during death-broadcast will cause the daemon to crash instead of completing the broadcast.
+3. **v1 import fidelity (Phase 1 decision):** The existing `internal/store` log is a SHA-256 linear hash chain, not a Merkle tree. v1 entries can be imported as Merkle leaves, but the resulting Merkle root will not match any hash stored in the v1 log — there is no cryptographic continuity, only documentary continuity. The import boundary marker leaf must explicitly state this. Decide whether to document the v1 chain as a separate audit trail or treat the import as a clean-break migration.
