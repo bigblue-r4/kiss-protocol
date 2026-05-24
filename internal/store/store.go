@@ -1,68 +1,110 @@
-// Package store implements the primary encrypted, append-only, hash-chained witness log.
+// Package store implements the primary encrypted, append-only Merkle log.
+//
+// Each entry is encrypted with AES-256-GCM and stored as a framed record
+// (4-byte big-endian length prefix). Separately, a tree head file holds the
+// current Merkle root and a BLAKE3-keyed MAC over (size || root), which
+// catches any tampering with the tree head itself. Phase 2 upgrades the MAC
+// to an ed25519 signature from a hardware-bound key.
+//
+// The Merkle tree is rebuilt from the decrypted leaf data on Open, so an
+// attacker who rewrites encrypted records without also rewriting the tree
+// head is detected on startup. An attacker who rewrites the tree head is
+// detected by the MAC.
 package store
 
 import (
-	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"lukechampine.com/blake3"
+
 	"github.com/bigblue-r4/kiss-protocol/internal/encrypt"
+	"github.com/bigblue-r4/kiss-protocol/internal/merkle"
 )
 
-// Entry is one log record.
+const (
+	logFilename      = "witness.log"
+	treeHeadFilename = "tree-head.json"
+)
+
+// Entry is one log record. PrevHash is accepted on decode for v1 backward
+// compatibility but is not written by v2.
 type Entry struct {
 	Seq       uint64          `json:"seq"`
 	Timestamp time.Time       `json:"ts"`
-	Level     string          `json:"level"` // INFO, WARN, ERROR, DRIFT, DEATH
+	Level     string          `json:"level"`
 	Event     string          `json:"event"`
 	Source    string          `json:"source"`
-	PrevHash  string          `json:"prev_hash"` // SHA-256 of previous entry plaintext
 	Data      json.RawMessage `json:"data,omitempty"`
 }
 
-const logFilename = "witness.log"
+// TreeHead is the Merkle log head stored at tree-head.json.
+type TreeHead struct {
+	Size      uint64 `json:"size"`
+	Root      string `json:"root"` // hex-encoded 32-byte BLAKE3 root
+	Timestamp string `json:"ts"`
+	MAC       string `json:"mac"` // BLAKE3-keyed(machineKey, size_be8 || root_bytes)
+}
 
-// Store is an encrypted, append-only, hash-chained log.
+// Store is an encrypted, append-only Merkle log.
 type Store struct {
-	mu       sync.Mutex
-	path     string
-	key      []byte
-	seq      uint64
-	prevHash string
-	f        *os.File
+	mu     sync.Mutex
+	dir    string
+	key    []byte
+	seq    uint64
+	leaves [][32]byte
+	f      *os.File
 }
 
 // Open opens or creates the log at dir/witness.log.
-// If existing entries are present it resumes the chain from the last entry.
+// If existing entries are present it rebuilds the Merkle tree and verifies
+// the stored tree head. Returns an error if integrity fails.
 func Open(dir string, key []byte) (*Store, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
+
+	entries, err := ReadAll(dir, key)
+	if err != nil {
+		return nil, fmt.Errorf("store: read existing log: %w", err)
+	}
+
+	// Rebuild Merkle tree from decrypted entry data.
+	leaves := make([][32]byte, len(entries))
+	for i, e := range entries {
+		leaves[i] = leafHash(e)
+	}
+
+	// Verify stored tree head if one exists.
+	if len(leaves) > 0 {
+		if err := verifyTreeHead(dir, key, leaves); err != nil {
+			return nil, fmt.Errorf("store: tree head integrity: %w", err)
+		}
+	}
+
+	var seq uint64
+	if len(entries) > 0 {
+		seq = entries[len(entries)-1].Seq
+	}
+
 	path := filepath.Join(dir, logFilename)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{path: path, key: key, f: f}
 
-	// Resume chain state from existing entries.
-	if entries, err := ReadAll(dir, key); err == nil && len(entries) > 0 {
-		last := entries[len(entries)-1]
-		s.seq = last.Seq
-		raw, _ := json.Marshal(last)
-		sum := sha256.Sum256(raw)
-		s.prevHash = hex.EncodeToString(sum[:])
-	}
-	return s, nil
+	return &Store{dir: dir, key: key, seq: seq, leaves: leaves, f: f}, nil
 }
 
-// Append encrypts and writes a new chained entry to the log.
+// Append encrypts and appends a new entry to the log, then updates the tree head.
 func (s *Store) Append(level, event, source string, data interface{}) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -74,7 +116,6 @@ func (s *Store) Append(level, event, source string, data interface{}) error {
 		Level:     level,
 		Event:     event,
 		Source:    source,
-		PrevHash:  s.prevHash,
 	}
 	if data != nil {
 		b, err := json.Marshal(data)
@@ -93,7 +134,6 @@ func (s *Store) Append(level, event, source string, data interface{}) error {
 		return err
 	}
 
-	// Wire format: [uint32 big-endian length][sealed bytes]
 	var lenBuf [4]byte
 	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(sealed)))
 	if _, err := s.f.Write(lenBuf[:]); err != nil {
@@ -103,18 +143,16 @@ func (s *Store) Append(level, event, source string, data interface{}) error {
 		return err
 	}
 
-	// Advance chain hash.
-	sum := sha256.Sum256(plain)
-	s.prevHash = hex.EncodeToString(sum[:])
-	return nil
+	s.leaves = append(s.leaves, leafHash(e))
+	return writeTreeHead(s.dir, s.key, s.leaves)
 }
 
-// Snapshot flushes and returns the raw encrypted log bytes (for backup/broadcast).
+// Snapshot flushes and returns the raw encrypted log bytes.
 func (s *Store) Snapshot() ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_ = s.f.Sync()
-	return os.ReadFile(s.path)
+	return os.ReadFile(filepath.Join(s.dir, logFilename))
 }
 
 // Close flushes and closes the log.
@@ -126,9 +164,72 @@ func (s *Store) Close() error {
 }
 
 // Path returns the log file path.
-func (s *Store) Path() string { return s.path }
+func (s *Store) Path() string {
+	return filepath.Join(s.dir, logFilename)
+}
+
+// Head returns the current tree head.
+func (s *Store) Head() TreeHead {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	root := merkle.Root(s.leaves)
+	return TreeHead{
+		Size:      uint64(len(s.leaves)),
+		Root:      hex.EncodeToString(root[:]),
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
+// VerifyIntegrity decrypts all entries, rebuilds the Merkle tree, and checks
+// the stored tree head. Returns the number of verified leaves and any error.
+func (s *Store) VerifyIntegrity() (uint64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entries, err := ReadAll(s.dir, s.key)
+	if err != nil {
+		return 0, err
+	}
+	leaves := make([][32]byte, len(entries))
+	for i, e := range entries {
+		leaves[i] = leafHash(e)
+	}
+	if len(leaves) == 0 {
+		return 0, nil
+	}
+	if err := verifyTreeHead(s.dir, s.key, leaves); err != nil {
+		return 0, err
+	}
+	return uint64(len(leaves)), nil
+}
+
+// InclusionProof returns an inclusion proof for the entry at the given
+// 0-based leaf index, along with the entry itself.
+func (s *Store) InclusionProof(index uint64) (merkle.Proof, Entry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entries, err := ReadAll(s.dir, s.key)
+	if err != nil {
+		return merkle.Proof{}, Entry{}, err
+	}
+	if index >= uint64(len(entries)) {
+		return merkle.Proof{}, Entry{}, fmt.Errorf("index %d out of range (log has %d entries)", index, len(entries))
+	}
+	leaves := make([][32]byte, len(entries))
+	for i, e := range entries {
+		leaves[i] = leafHash(e)
+	}
+	proof, err := merkle.Prove(leaves, index)
+	if err != nil {
+		return merkle.Proof{}, Entry{}, err
+	}
+	return proof, entries[index], nil
+}
 
 // ReadAll decrypts and returns all entries from dir/witness.log.
+// Entries with an unrecognised prev_hash field (v1 format) are decoded
+// normally — the field is simply ignored by the v2 struct.
 func ReadAll(dir string, key []byte) ([]Entry, error) {
 	path := filepath.Join(dir, logFilename)
 	f, err := os.Open(path)
@@ -144,10 +245,10 @@ func ReadAll(dir string, key []byte) ([]Entry, error) {
 	for {
 		var lenBuf [4]byte
 		if _, err := io.ReadFull(f, lenBuf[:]); err != nil {
-			break // EOF or incomplete record
+			break
 		}
 		length := binary.BigEndian.Uint32(lenBuf[:])
-		if length == 0 || length > 64<<20 { // sanity: max 64 MiB per record
+		if length == 0 || length > 64<<20 {
 			break
 		}
 		sealed := make([]byte, length)
@@ -156,7 +257,7 @@ func ReadAll(dir string, key []byte) ([]Entry, error) {
 		}
 		plain, err := encrypt.Open(sealed, key)
 		if err != nil {
-			continue // skip corrupted record
+			continue
 		}
 		var e Entry
 		if err := json.Unmarshal(plain, &e); err != nil {
@@ -165,4 +266,101 @@ func ReadAll(dir string, key []byte) ([]Entry, error) {
 		entries = append(entries, e)
 	}
 	return entries, nil
+}
+
+// leafHash returns the Merkle leaf hash for an entry.
+// It hashes the canonical JSON encoding of the entry so that the hash is
+// computable from plaintext — no encryption key required to verify the tree.
+func leafHash(e Entry) [32]byte {
+	b, _ := json.Marshal(e)
+	return merkle.HashLeaf(b)
+}
+
+// writeTreeHead atomically writes the tree head file.
+func writeTreeHead(dir string, key []byte, leaves [][32]byte) error {
+	root := merkle.Root(leaves)
+	mac := computeMAC(key, uint64(len(leaves)), root)
+
+	head := TreeHead{
+		Size:      uint64(len(leaves)),
+		Root:      hex.EncodeToString(root[:]),
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		MAC:       hex.EncodeToString(mac[:]),
+	}
+	data, err := json.MarshalIndent(head, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := filepath.Join(dir, treeHeadFilename+".tmp")
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, filepath.Join(dir, treeHeadFilename))
+}
+
+// verifyTreeHead reads tree-head.json and checks it against the given leaf set.
+func verifyTreeHead(dir string, key []byte, leaves [][32]byte) error {
+	data, err := os.ReadFile(filepath.Join(dir, treeHeadFilename))
+	if err != nil {
+		if os.IsNotExist(err) {
+			// No tree head yet — first open after a v1 install. Acceptable:
+			// writeTreeHead will create it on the next Append.
+			return nil
+		}
+		return err
+	}
+	var head TreeHead
+	if err := json.Unmarshal(data, &head); err != nil {
+		return fmt.Errorf("parse tree head: %w", err)
+	}
+
+	root := merkle.Root(leaves)
+	storedRoot, err := hex.DecodeString(head.Root)
+	if err != nil || len(storedRoot) != 32 {
+		return errors.New("tree head: malformed root")
+	}
+	var storedRootArr [32]byte
+	copy(storedRootArr[:], storedRoot)
+	if root != storedRootArr {
+		return fmt.Errorf("tree head root mismatch: log has been tampered (expected %s, got %s)",
+			head.Root, hex.EncodeToString(root[:]))
+	}
+	if head.Size != uint64(len(leaves)) {
+		return fmt.Errorf("tree head size mismatch: expected %d leaves, log has %d", head.Size, len(leaves))
+	}
+
+	storedMAC, err := hex.DecodeString(head.MAC)
+	if err != nil || len(storedMAC) != 32 {
+		return errors.New("tree head: malformed MAC")
+	}
+	expected := computeMAC(key, uint64(len(leaves)), root)
+	if !macEqual(expected[:], storedMAC) {
+		return errors.New("tree head MAC verification failed — tree head may have been tampered")
+	}
+	return nil
+}
+
+// computeMAC returns BLAKE3-keyed(key, size_be8 || root).
+// The key must be exactly 32 bytes (the machine-derived AES key).
+func computeMAC(key []byte, size uint64, root [32]byte) [32]byte {
+	var sizeBuf [8]byte
+	binary.BigEndian.PutUint64(sizeBuf[:], size)
+	h := blake3.New(32, key)
+	h.Write(sizeBuf[:])
+	h.Write(root[:])
+	var out [32]byte
+	copy(out[:], h.Sum(nil))
+	return out
+}
+
+// macEqual is a constant-time comparison.
+func macEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	var diff byte
+	for i := range a {
+		diff |= a[i] ^ b[i]
+	}
+	return diff == 0
 }

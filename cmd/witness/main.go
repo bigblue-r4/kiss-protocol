@@ -5,6 +5,9 @@
 //	witness init              Take genesis snapshot and initialize the witness log.
 //	witness start             Start the witness daemon (blocks until signaled).
 //	witness status            Print current status.
+//	witness verify            Walk the Merkle log and verify integrity.
+//	witness prove <index>     Emit an inclusion proof for the leaf at index.
+//	witness migrate           Import a v1 log into the v2 Merkle log (one-shot).
 //	witness enable-sync       Enable opt-in SGAIL remote sync.
 //	witness watchdog <args>   Internal watchdog subprocess — do not call directly.
 //	witness version           Print version.
@@ -22,13 +25,13 @@ import (
 	"time"
 
 	"github.com/bigblue-r4/kiss-protocol/internal/anomaly"
-	"github.com/bigblue-r4/kiss-protocol/internal/backup"
 	"github.com/bigblue-r4/kiss-protocol/internal/config"
 	"github.com/bigblue-r4/kiss-protocol/internal/death"
 	"github.com/bigblue-r4/kiss-protocol/internal/drift"
 	"github.com/bigblue-r4/kiss-protocol/internal/encrypt"
 	"github.com/bigblue-r4/kiss-protocol/internal/genesis"
 	"github.com/bigblue-r4/kiss-protocol/internal/machid"
+	"github.com/bigblue-r4/kiss-protocol/internal/migrate"
 	"github.com/bigblue-r4/kiss-protocol/internal/pipelock"
 	"github.com/bigblue-r4/kiss-protocol/internal/sgail"
 	"github.com/bigblue-r4/kiss-protocol/internal/soul"
@@ -49,6 +52,12 @@ func main() {
 		cmdStart()
 	case "status":
 		cmdStatus()
+	case "verify":
+		cmdVerify()
+	case "prove":
+		cmdProve()
+	case "migrate":
+		cmdMigrate()
 	case "enable-sync":
 		cmdEnableSync()
 	case "watchdog":
@@ -65,9 +74,12 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `SGAIL Labs Harborlight Firewall witness v%s
 
 Usage:
-  witness init             Take genesis snapshot, initialize three-tier log storage
+  witness init             Take genesis snapshot, initialize Merkle log
   witness start            Start the continuous witness daemon
   witness status           Show current witness status
+  witness verify           Walk Merkle log and verify integrity
+  witness prove <index>    Emit inclusion proof for leaf at index
+  witness migrate          Import v1 log into v2 Merkle log (one-shot)
   witness enable-sync      Configure opt-in SGAIL Labs remote sync
   witness version          Print version
 
@@ -183,23 +195,11 @@ func cmdInit() {
 		fatal("encrypt genesis: %v", err)
 	}
 
-	// ── Store genesis in all three locations ──────────────────────────────
-
-	// Primary
+	// ── Store genesis ─────────────────────────────────────────────────────
 	if err := os.MkdirAll(cfg.PrimaryDir, 0700); err != nil {
 		fatal("create primary dir: %v", err)
 	}
 	mustWrite(filepath.Join(cfg.PrimaryDir, "genesis.enc"), snapEnc)
-
-	// Secondary
-	if err := backup.WriteSecondary("genesis.enc", snapEnc); err != nil {
-		warn("secondary backup: %v", err)
-	}
-
-	// Tertiary (path derived from machine identity — never stored in config)
-	if err := backup.WriteTertiary(mid, "genesis.enc", snapEnc); err != nil {
-		warn("tertiary backup: %v", err)
-	}
 
 	// ── Open the primary log and write genesis entry (entry zero) ─────────
 	s, err := store.Open(cfg.PrimaryDir, key)
@@ -255,9 +255,7 @@ func cmdInit() {
 	fmt.Printf("  Machine ID : %s\n", mid)
 	fmt.Printf("  Hash       : %s\n", snap.Hash)
 	fmt.Printf("  Files      : %d paths watched\n", len(snap.Files))
-	fmt.Printf("  Primary    : %s\n", cfg.PrimaryDir)
-	fmt.Printf("  Secondary  : %s\n", backup.SecondaryDir())
-	fmt.Printf("  Tertiary   : [derived from machine identity — not stored]\n")
+	fmt.Printf("  Log        : %s\n", cfg.PrimaryDir)
 	fmt.Printf("\nNow install your AI agents, then run: witness start\n")
 }
 
@@ -309,16 +307,7 @@ func cmdStart() {
 		}
 	}
 
-	// Build death broadcaster.
-	tertiaryDir := backup.TertiaryDir(mid)
-	_ = os.MkdirAll(tertiaryDir, 0700)
-	broadcaster := death.New(
-		cfg.PrimaryDir,
-		backup.SecondaryDir(),
-		tertiaryDir,
-		mid,
-		sgailClient,
-	)
+	broadcaster := death.New(cfg.PrimaryDir, mid, sgailClient)
 
 	// ── Pipelock integration ───────────────────────────────────────────────
 	plCfg := pipelock.DefaultConfig(cfg.PrimaryDir)
@@ -358,10 +347,8 @@ func cmdStart() {
 	fmt.Printf("[witness] Genesis: %s\n", snap.Hash)
 
 	driftTick := time.NewTicker(time.Duration(cfg.DriftIntervalSec) * time.Second)
-	backupTick := time.NewTicker(5 * time.Minute)
 	syncTick := time.NewTicker(time.Duration(cfg.SyncIntervalSec) * time.Second)
 	defer driftTick.Stop()
-	defer backupTick.Stop()
 	defer syncTick.Stop()
 
 	// fireDeath tears everything down and broadcasts, then returns.
@@ -411,10 +398,6 @@ func cmdStart() {
 			} else {
 				_ = s.Append("INFO", "drift_clean", "drift", nil)
 			}
-
-		// ── Periodic backup mirror ─────────────────────────────────────────
-		case <-backupTick.C:
-			mirrorToBackups(mid, cfg.PrimaryDir)
 
 		// ── SGAIL sync ─────────────────────────────────────────────────────
 		case <-syncTick.C:
@@ -569,14 +552,30 @@ func cmdStatus() {
 	}
 	_ = agentCount
 
+	// Build tree head for display.
+	s, err := store.Open(cfg.PrimaryDir, key)
+	var treeSize uint64
+	var treeRoot string
+	var integrityStatus string
+	if err != nil {
+		integrityStatus = "FAIL: " + err.Error()
+	} else {
+		head := s.Head()
+		treeSize = head.Size
+		treeRoot = head.Root
+		integrityStatus = "OK"
+		_ = s.Close()
+	}
+
 	fmt.Println("─────────────────────────────────────────")
 	fmt.Printf("Machine ID    : %s\n", mid)
 	fmt.Printf("Genesis       : %s\n", genesisStatus)
 	fmt.Printf("Log entries   : %d\n", len(entries))
 	fmt.Printf("Drift events  : %d\n", driftCount)
-	fmt.Printf("Primary       : %s\n", cfg.PrimaryDir)
-	fmt.Printf("Secondary     : %s\n", backup.SecondaryDir())
-	fmt.Printf("Tertiary      : [derived — not displayed]\n")
+	fmt.Printf("Tree size     : %d\n", treeSize)
+	fmt.Printf("Tree root     : %s\n", treeRoot)
+	fmt.Printf("Integrity     : %s\n", integrityStatus)
+	fmt.Printf("Log dir       : %s\n", cfg.PrimaryDir)
 	if cfg.SGAILEnabled {
 		fmt.Printf("SGAIL sync    : enabled (%s)\n", cfg.SGAILEndpoint)
 	} else {
@@ -622,47 +621,25 @@ func cmdWatchdog() {
 		sgailClient = sgail.NewClient(sgailEndpoint, sgailToken)
 	}
 
-	tertiaryDir := backup.TertiaryDir(mid)
-	broadcaster := death.New(
-		primaryDir,
-		backup.SecondaryDir(),
-		tertiaryDir,
-		mid,
-		sgailClient,
-	)
+	broadcaster := death.New(primaryDir, mid, sgailClient)
 
 	for {
 		time.Sleep(2 * time.Second)
 		parent, err := os.FindProcess(ppid)
 		if err != nil {
-			break // parent gone
+			break
 		}
-		// On Unix, FindProcess never fails; probe with signal 0.
 		if err := parent.Signal(syscall.Signal(0)); err != nil {
-			break // parent gone
+			break
 		}
 	}
 
-	// Parent is gone — fire the death broadcast from the watchdog.
 	logData, _ := os.ReadFile(filepath.Join(primaryDir, "witness.log"))
 	genesisData, _ := os.ReadFile(filepath.Join(primaryDir, "genesis.enc"))
 	broadcaster.Fire(logData, genesisData)
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-
-func mirrorToBackups(mid, primaryDir string) {
-	logData, err := os.ReadFile(filepath.Join(primaryDir, "witness.log"))
-	if err != nil {
-		return
-	}
-	genesisData, _ := os.ReadFile(filepath.Join(primaryDir, "genesis.enc"))
-
-	_ = backup.WriteSecondary("witness.log", logData)
-	_ = backup.WriteSecondary("genesis.enc", genesisData)
-	_ = backup.WriteTertiary(mid, "witness.log", logData)
-	_ = backup.WriteTertiary(mid, "genesis.enc", genesisData)
-}
 
 func spawnWatchdog(mid, primaryDir, sgailEndpoint, sgailToken string) {
 	self, err := os.Executable()
@@ -687,6 +664,45 @@ func spawnWatchdog(mid, primaryDir, sgailEndpoint, sgailToken string) {
 		return
 	}
 	_ = proc.Release()
+}
+
+// ── migrate ───────────────────────────────────────────────────────────────────
+
+func cmdMigrate() {
+	mid := machid.Get()
+	cfg, err := config.Load(config.Path())
+	if err != nil {
+		fatal("load config: %v\n\nRun 'witness init' first.", err)
+	}
+	key, err := encrypt.DeriveKey(mid)
+	if err != nil {
+		fatal("derive key: %v", err)
+	}
+
+	// Determine v1 log source — default is the same primary dir (in-place migration).
+	srcDir := cfg.PrimaryDir
+	if len(os.Args) >= 3 {
+		srcDir = os.Args[2]
+	}
+
+	s, err := store.Open(cfg.PrimaryDir, key)
+	if err != nil {
+		fatal("open store: %v", err)
+	}
+	defer s.Close()
+
+	result, err := migrate.FromV1Log(srcDir, key, s)
+	if err != nil {
+		fatal("migrate: %v", err)
+	}
+
+	fmt.Printf("[witness] Migration complete.\n")
+	fmt.Printf("  Source      : %s\n", result.LogPath)
+	fmt.Printf("  Imported    : %d entries\n", result.Imported)
+	if result.Skipped > 0 {
+		fmt.Printf("  Skipped     : %d (could not decode)\n", result.Skipped)
+	}
+	fmt.Printf("  Boundary    : v1_import_boundary leaf appended\n")
 }
 
 func mustWrite(path string, data []byte) {
