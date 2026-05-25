@@ -37,6 +37,7 @@ import (
 	"github.com/bigblue-r4/kiss-protocol/internal/migrate"
 	"github.com/bigblue-r4/kiss-protocol/internal/mirror"
 	"github.com/bigblue-r4/kiss-protocol/internal/pipelock"
+	"github.com/bigblue-r4/kiss-protocol/internal/pipelock_bridge"
 	"github.com/bigblue-r4/kiss-protocol/internal/sgail"
 	"github.com/bigblue-r4/kiss-protocol/internal/signer"
 	"github.com/bigblue-r4/kiss-protocol/internal/soul"
@@ -384,19 +385,15 @@ func cmdStart() {
 		}
 	}
 
-	// ── Pipelock integration ───────────────────────────────────────────────
+	// ── Pipelock bridge ────────────────────────────────────────────────────
 	plCfg := pipelock.DefaultConfig(cfg.PrimaryDir)
-	plRunner := pipelock.NewRunner(plCfg)
-	plEvents := make(chan pipelock.AuditEvent, 256)
-	plTailer := pipelock.NewTailer(plCfg.AuditLogPath(), plEvents)
-
-	if err := plRunner.Start(); err != nil {
+	bridge := pipelock_bridge.New(plCfg, s)
+	if err := bridge.Start(); err != nil {
 		warn("Pipelock unavailable: %v (agent events will not be forwarded)", err)
 	} else {
-		fmt.Printf("[witness] Pipelock proxy running → %s\n", plRunner.ProxyAddr())
+		fmt.Printf("[witness] Pipelock proxy running → %s\n", bridge.ProxyAddr())
 		fmt.Printf("[witness] Set HTTPS_PROXY=%s HTTP_PROXY=%s in your agent environment.\n",
-			plRunner.ProxyAddr(), plRunner.ProxyAddr())
-		go plTailer.Run()
+			bridge.ProxyAddr(), bridge.ProxyAddr())
 	}
 
 	// ── Anomaly detector (storage + network) ──────────────────────────────
@@ -450,8 +447,7 @@ func cmdStart() {
 	fireDeath := func(reason, detail string) {
 		fmt.Printf("[witness] Death trigger: %s — broadcasting…\n", reason)
 		_ = s.Append("DEATH", reason, "witness", map[string]string{"detail": detail})
-		plTailer.Stop()
-		plRunner.Stop()
+		bridge.Stop()
 		adet.Stop()
 		gossipCancel()
 		if gossipNode != nil {
@@ -467,14 +463,6 @@ func cmdStart() {
 
 	for {
 		select {
-
-		// ── Pipelock audit events ──────────────────────────────────────────
-		case evt := <-plEvents:
-			level := strings.ToUpper(evt.Level())
-			if level == "DEBUG" || level == "TRACE" {
-				level = "INFO"
-			}
-			_ = s.Append(level, evt.EventName(), "pipelock", evt)
 
 		// ── Anomaly detection ──────────────────────────────────────────────
 		case a := <-anomalyCh:
