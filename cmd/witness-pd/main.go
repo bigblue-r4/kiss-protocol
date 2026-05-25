@@ -35,7 +35,7 @@ import (
 	"github.com/bigblue-r4/kiss-protocol/internal/soul"
 )
 
-const version = "1.0.0"
+const version = "2.0.0"
 
 // Config is persisted to ~/.witness-pd/config.json.
 type Config struct {
