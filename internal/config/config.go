@@ -19,6 +19,7 @@ type Config struct {
 	SGAILToken       string `json:"sgail_token,omitempty"`
 	SyncIntervalSec  int    `json:"sync_interval_sec"`
 	DriftIntervalSec int    `json:"drift_interval_sec"`
+	GossipListenAddr string `json:"gossip_listen_addr,omitempty"` // UDP addr; default ":9273"
 }
 
 // DefaultConfig returns a config with sensible defaults.

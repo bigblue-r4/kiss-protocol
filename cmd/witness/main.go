@@ -24,12 +24,15 @@ import (
 	"syscall"
 	"time"
 
+	"context"
+
 	"github.com/bigblue-r4/kiss-protocol/internal/anomaly"
 	"github.com/bigblue-r4/kiss-protocol/internal/config"
 	"github.com/bigblue-r4/kiss-protocol/internal/death"
 	"github.com/bigblue-r4/kiss-protocol/internal/drift"
 	"github.com/bigblue-r4/kiss-protocol/internal/encrypt"
 	"github.com/bigblue-r4/kiss-protocol/internal/genesis"
+	"github.com/bigblue-r4/kiss-protocol/internal/gossip"
 	"github.com/bigblue-r4/kiss-protocol/internal/machid"
 	"github.com/bigblue-r4/kiss-protocol/internal/migrate"
 	"github.com/bigblue-r4/kiss-protocol/internal/pipelock"
@@ -61,6 +64,8 @@ func main() {
 		cmdMigrate()
 	case "soul":
 		cmdSoul()
+	case "peer":
+		cmdPeer()
 	case "enable-sync":
 		cmdEnableSync()
 	case "watchdog":
@@ -77,16 +82,19 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `SGAIL Labs Harborlight Firewall witness v%s
 
 Usage:
-  witness init             Take genesis snapshot, initialize Merkle log
-  witness start [--dev]    Start the continuous witness daemon
-  witness status           Show current witness status
-  witness verify           Walk Merkle log and verify integrity
-  witness prove <index>    Emit inclusion proof for leaf at index
-  witness migrate          Import v1 log into v2 Merkle log (one-shot)
-  witness soul sign        Sign the soul file with the configured signer
-  witness soul verify      Verify the soul file signature against the allowlist
-  witness enable-sync      Configure opt-in SGAIL Labs remote sync
-  witness version          Print version
+  witness init                    Take genesis snapshot, initialize Merkle log
+  witness start [--dev]           Start the continuous witness daemon
+  witness status                  Show current witness status
+  witness verify                  Walk Merkle log and verify integrity
+  witness prove <index>           Emit inclusion proof for leaf at index
+  witness migrate                 Import v1 log into v2 Merkle log (one-shot)
+  witness soul sign               Sign the soul file with the configured signer
+  witness soul verify             Verify soul file signature against allowlist
+  witness peer list               List configured gossip peers
+  witness peer add <l> <addr> <k> Add a gossip peer (label, UDP addr, hex pubkey)
+  witness peer remove <label>     Remove a gossip peer
+  witness enable-sync             Configure opt-in SGAIL Labs remote sync [deprecated]
+  witness version                 Print version
 
 `, version)
 }
@@ -327,6 +335,40 @@ func cmdStart() {
 
 	broadcaster := death.New(cfg.PrimaryDir, mid, sgailClient)
 
+	// ── Gossip heartbeat mesh ─────────────────────────────────────────────
+	gossipCtx, gossipCancel := context.WithCancel(context.Background())
+	var gossipNode *gossip.Node
+	var gossipPeers []gossip.Peer
+	peerStore, peerErr := gossip.LoadPeers(filepath.Join(witnessDir(), "peers.json"))
+	if peerErr != nil {
+		warn("load peers: %v (gossip disabled)", peerErr)
+	} else if len(peerStore.All()) > 0 {
+		gossipPeers = peerStore.All()
+		listenAddr := cfg.GossipListenAddr
+		if listenAddr == "" {
+			listenAddr = ":" + gossip.DefaultPort
+		}
+		gossipNode = gossip.NewNode(gossip.NodeConfig{
+			Signer:     signerInst,
+			Peers:      gossipPeers,
+			ListenAddr: listenAddr,
+			OnSilent: func(p gossip.Peer) {
+				_ = s.Append("WARN", "peer_silent", "gossip", map[string]string{"peer": p.Label, "addr": p.Addr})
+				warn("Gossip: peer %q silent", p.Label)
+			},
+			OnDeath: func(p gossip.Peer) {
+				_ = s.Append("WARN", "peer_presumed_compromised", "gossip", map[string]string{"peer": p.Label, "addr": p.Addr})
+				warn("Gossip: peer %q presumed compromised — possible tampering or crash", p.Label)
+			},
+		})
+		if err := gossipNode.Start(gossipCtx); err != nil {
+			warn("gossip start: %v (gossip disabled)", err)
+			gossipNode = nil
+		} else {
+			fmt.Printf("[witness] Gossip listening on %s (%d peer(s))\n", gossipNode.LocalAddr(), len(gossipPeers))
+		}
+	}
+
 	// ── Pipelock integration ───────────────────────────────────────────────
 	plCfg := pipelock.DefaultConfig(cfg.PrimaryDir)
 	plRunner := pipelock.NewRunner(plCfg)
@@ -370,12 +412,19 @@ func cmdStart() {
 	defer syncTick.Stop()
 
 	// fireDeath tears everything down and broadcasts, then returns.
+	var deathSeq uint64
 	fireDeath := func(reason, detail string) {
 		fmt.Printf("[witness] Death trigger: %s — broadcasting…\n", reason)
 		_ = s.Append("DEATH", reason, "witness", map[string]string{"detail": detail})
 		plTailer.Stop()
 		plRunner.Stop()
 		adet.Stop()
+		gossipCancel()
+		if gossipNode != nil {
+			deathSeq++
+			gossip.BroadcastDeath(gossipPeers, signerInst, mid, reason, deathSeq)
+			gossipNode.Stop()
+		}
 		_ = s.Close()
 		logData, _ := os.ReadFile(filepath.Join(cfg.PrimaryDir, "witness.log"))
 		broadcaster.Fire(logData, snapEncBytes)
@@ -448,6 +497,11 @@ func cmdStart() {
 //   witness enable-sync --endpoint https://... [--token t]  (non-interactive)
 
 func cmdEnableSync() {
+	fmt.Fprintln(os.Stderr, "[witness] DEPRECATED: SGAIL remote sync is deprecated in favour of the")
+	fmt.Fprintln(os.Stderr, "          gossip peer mesh (witness peer add). It will be removed in the")
+	fmt.Fprintln(os.Stderr, "          next major release. See docs/migrating-from-sgail-sync.md.")
+	fmt.Fprintln(os.Stderr, "")
+
 	// Parse optional flags: --endpoint <url> --token <tok>
 	var flagEndpoint, flagToken string
 	args := os.Args[2:]
