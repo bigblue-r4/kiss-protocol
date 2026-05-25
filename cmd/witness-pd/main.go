@@ -6,13 +6,12 @@
 // Usage:
 //
 //	witness-pd init [--department NAME] [--node NODE_ID]
-//	witness-pd status
+//	witness-pd status [--json]
 //	witness-pd intake  --case CASE --cat CATEGORY --desc DESC --actor ACTOR [--node NODE]
 //	witness-pd transfer --item ID --from NODE --to NODE --actor ACTOR [--notes TEXT]
 //	witness-pd hold set --item ID --reason TEXT --actor ACTOR
 //	witness-pd hold release --item ID --actor ACTOR [--notes TEXT]
 //	witness-pd export --case CASE --actor ACTOR [--sign]
-//	witness-pd serve [--port PORT]
 //	witness-pd keygen
 //	witness-pd version
 package main
@@ -23,14 +22,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 	"time"
-
-	_ "embed"
 
 	"golang.org/x/crypto/hkdf"
 
@@ -40,9 +34,6 @@ import (
 	"github.com/bigblue-r4/kiss-protocol/internal/pd/roles"
 	"github.com/bigblue-r4/kiss-protocol/internal/soul"
 )
-
-//go:embed static/index.html
-var dashboardHTML []byte
 
 const version = "1.0.0"
 
@@ -76,8 +67,6 @@ func main() {
 		runHold()
 	case "export":
 		runExport()
-	case "serve":
-		runServe()
 	case "keygen":
 		runKeygen()
 	case "version", "--version", "-v":
@@ -149,12 +138,16 @@ func runInit() {
 	fmt.Printf("║  Node     : %-46s║\n", *nodeID)
 	fmt.Printf("║  Data dir : %-46s║\n", dir)
 	fmt.Println("║                                                           ║")
-	fmt.Println("║  witness-pd serve     — start the dashboard               ║")
 	fmt.Println("║  witness-pd status    — view current state                ║")
+	fmt.Println("║  witness-pd status --json — machine-readable status       ║")
 	fmt.Println("╚═══════════════════════════════════════════════════════════╝")
 }
 
 func runStatus() {
+	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	asJSON := fs.Bool("json", false, "Output status as JSON")
+	_ = fs.Parse(os.Args[2:])
+
 	dir := pdDir()
 	cfg, err := loadConfig(dir)
 	if err != nil {
@@ -167,9 +160,9 @@ func runStatus() {
 	}
 
 	soulPath := filepath.Join(dir, "soul.toml")
-	soulStatus := "OK"
+	soulStatus := "ok"
 	if _, err := soul.Load(soulPath); err != nil {
-		soulStatus = "FAILED"
+		soulStatus = "failed"
 	}
 
 	pd, err := evidence.Open(filepath.Join(dir, "primary"), key)
@@ -194,6 +187,26 @@ func runStatus() {
 		lastEvent = e.Event
 		t := e.Timestamp
 		lastEventAt = &t
+	}
+
+	if *asJSON {
+		out := map[string]interface{}{
+			"node_id":     cfg.NodeID,
+			"department":  cfg.Department,
+			"version":     version,
+			"soul":        soulStatus,
+			"item_count":  len(items),
+			"hold_count":  holdCount,
+			"log_entries": len(events),
+		}
+		if lastEvent != "" && lastEventAt != nil {
+			out["last_event"] = lastEvent
+			out["last_event_at"] = lastEventAt.UTC().Format(time.RFC3339)
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(out)
+		return
 	}
 
 	fmt.Println("─────────────────────────────────────────────────────")
@@ -371,62 +384,6 @@ func runExport() {
 	fmt.Printf("  Output      : %s\n", outPath)
 }
 
-func runServe() {
-	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	port := fs.Int("port", 0, "Port to listen on (overrides config)")
-	_ = fs.Parse(os.Args[2:])
-
-	token := os.Getenv("WITNESS_PD_TOKEN")
-	if token == "" {
-		fatal("WITNESS_PD_TOKEN env var is required to start the dashboard server")
-	}
-
-	dir := pdDir()
-	cfg, err := loadConfig(dir)
-	if err != nil {
-		fatal("not initialized — run: witness-pd init")
-	}
-	if *port > 0 {
-		cfg.Port = *port
-	}
-	if cfg.Port == 0 {
-		cfg.Port = 8890
-	}
-
-	key, err := derivePDKey(machid.Get())
-	if err != nil {
-		fatal("derive key: %v", err)
-	}
-
-	pd, err := evidence.Open(filepath.Join(dir, "primary"), key)
-	if err != nil {
-		fatal("open store: %v", err)
-	}
-
-	srv := &server{pd: pd, cfg: cfg, dir: dir, key: key, token: token}
-	mux := http.NewServeMux()
-
-	// Dashboard.
-	mux.HandleFunc("/", srv.handleDashboard)
-
-	// API routes (all require auth).
-	mux.Handle("/api/status", srv.auth(http.HandlerFunc(srv.handleStatus)))
-	mux.Handle("/api/items", srv.auth(http.HandlerFunc(srv.handleItems)))
-	mux.Handle("/api/events", srv.auth(http.HandlerFunc(srv.handleEvents)))
-	mux.Handle("/api/intake", srv.auth(http.HandlerFunc(srv.handleIntake)))
-	mux.Handle("/api/transfer", srv.auth(http.HandlerFunc(srv.handleTransfer)))
-	mux.Handle("/api/hold/set", srv.auth(http.HandlerFunc(srv.handleHoldSet)))
-	mux.Handle("/api/hold/release", srv.auth(http.HandlerFunc(srv.handleHoldRelease)))
-	mux.Handle("/api/export", srv.auth(http.HandlerFunc(srv.handleExport)))
-
-	addr := fmt.Sprintf("127.0.0.1:%d", cfg.Port)
-	fmt.Printf("witness-pd dashboard: http://%s\n", addr)
-	fmt.Printf("Node: %s  Dept: %s\n", cfg.NodeID, cfg.Department)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		fatal("serve: %v", err)
-	}
-}
-
 func runKeygen() {
 	pub, priv, err := pdexport.GenerateKeyPair()
 	if err != nil {
@@ -440,292 +397,6 @@ func runKeygen() {
 	fmt.Println()
 	fmt.Println("Never store the private key in config.json.")
 	fmt.Println("Pass it as: export WITNESS_PD_SIGN_KEY=<private_key_hex>")
-}
-
-// ── HTTP server ───────────────────────────────────────────────────────────────
-
-type server struct {
-	pd    *evidence.PDStore
-	cfg   Config
-	dir   string
-	key   []byte
-	token string
-}
-
-func (s *server) auth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.token {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func (s *server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(dashboardHTML)
-}
-
-func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	items := s.pd.GetItems("")
-	holdCount := 0
-	for _, it := range items {
-		if it.LegalHold {
-			holdCount++
-		}
-	}
-	events, _ := s.pd.GetAllEvents()
-	resp := map[string]interface{}{
-		"node_id":     s.cfg.NodeID,
-		"department":  s.cfg.Department,
-		"version":     version,
-		"item_count":  len(items),
-		"hold_count":  holdCount,
-		"log_entries": len(events),
-	}
-	if len(events) > 0 {
-		e := events[len(events)-1]
-		resp["last_event"] = e.Event
-		resp["last_event_at"] = e.Timestamp
-	}
-	writeJSON(w, resp)
-}
-
-func (s *server) handleItems(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	caseNum := r.URL.Query().Get("case")
-	items := s.pd.GetItems(caseNum)
-	// Sort by created_at descending.
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].CreatedAt.After(items[j].CreatedAt)
-	})
-	writeJSON(w, items)
-}
-
-func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	events, err := s.pd.GetAllEvents()
-	if err != nil {
-		http.Error(w, "read events: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Optional filters.
-	caseNum := r.URL.Query().Get("case")
-	dateStr := r.URL.Query().Get("date") // YYYY-MM-DD
-	if caseNum != "" || dateStr != "" {
-		var filtered []interface{}
-		for _, e := range events {
-			if dateStr != "" && !strings.HasPrefix(e.Timestamp.UTC().Format(time.RFC3339), dateStr) {
-				continue
-			}
-			if caseNum != "" {
-				// Check if event data matches case number.
-				if e.Data != nil {
-					var d struct {
-						CaseNumber string `json:"case_number"`
-					}
-					if json.Unmarshal(e.Data, &d) == nil && d.CaseNumber != caseNum {
-						continue
-					}
-				}
-			}
-			filtered = append(filtered, e)
-		}
-		writeJSON(w, filtered)
-		return
-	}
-	writeJSON(w, events)
-}
-
-func (s *server) handleIntake(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		CaseNumber  string `json:"case_number"`
-		Description string `json:"description"`
-		Category    string `json:"category"`
-		Actor       string `json:"actor"`
-		Node        string `json:"node"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if req.CaseNumber == "" || req.Description == "" || req.Actor == "" {
-		http.Error(w, "case_number, description, and actor are required", http.StatusBadRequest)
-		return
-	}
-	if req.Category == "" {
-		req.Category = "other"
-	}
-	item := &evidence.Item{
-		CaseNumber:  req.CaseNumber,
-		Description: req.Description,
-		Category:    req.Category,
-		CurrentNode: req.Node,
-	}
-	if err := s.pd.RecordIntake(item, req.Actor); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, item)
-}
-
-func (s *server) handleTransfer(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		ItemID   string `json:"item_id"`
-		Actor    string `json:"actor"`
-		FromNode string `json:"from_node"`
-		ToNode   string `json:"to_node"`
-		Notes    string `json:"notes"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if req.ItemID == "" || req.Actor == "" || req.ToNode == "" {
-		http.Error(w, "item_id, actor, and to_node are required", http.StatusBadRequest)
-		return
-	}
-	if err := s.pd.RecordTransfer(req.ItemID, req.Actor, req.FromNode, req.ToNode, req.Notes); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	writeJSON(w, map[string]string{"status": "ok", "item_id": req.ItemID})
-}
-
-func (s *server) handleHoldSet(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		ItemID string `json:"item_id"`
-		Actor  string `json:"actor"`
-		Reason string `json:"reason"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if req.ItemID == "" || req.Actor == "" || req.Reason == "" {
-		http.Error(w, "item_id, actor, and reason are required", http.StatusBadRequest)
-		return
-	}
-	if err := s.pd.SetLegalHold(req.ItemID, req.Actor, req.Reason); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	writeJSON(w, map[string]string{"status": "ok", "item_id": req.ItemID})
-}
-
-func (s *server) handleHoldRelease(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		ItemID string `json:"item_id"`
-		Actor  string `json:"actor"`
-		Notes  string `json:"notes"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if req.ItemID == "" || req.Actor == "" {
-		http.Error(w, "item_id and actor are required", http.StatusBadRequest)
-		return
-	}
-	if err := s.pd.ReleaseLegalHold(req.ItemID, req.Actor, req.Notes); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	writeJSON(w, map[string]string{"status": "ok", "item_id": req.ItemID})
-}
-
-func (s *server) handleExport(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		CaseNumber string `json:"case_number"`
-		Actor      string `json:"actor"`
-		Sign       bool   `json:"sign"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if req.CaseNumber == "" || req.Actor == "" {
-		http.Error(w, "case_number and actor are required", http.StatusBadRequest)
-		return
-	}
-
-	entries, err := s.pd.GetAllEvents()
-	if err != nil {
-		http.Error(w, "read events: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	bundle, err := pdexport.Generate(entries, req.CaseNumber, s.cfg.Department, s.cfg.NodeID)
-	if err != nil {
-		http.Error(w, "generate bundle: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if req.Sign {
-		privKey := os.Getenv("WITNESS_PD_SIGN_KEY")
-		if privKey == "" {
-			http.Error(w, "signing requires WITNESS_PD_SIGN_KEY env var", http.StatusBadRequest)
-			return
-		}
-		if err := pdexport.Sign(bundle, privKey); err != nil {
-			http.Error(w, "sign: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-	exportDir := filepath.Join(s.dir, "exports")
-	outPath := filepath.Join(exportDir, bundle.BundleID+".ndjson")
-	if err := pdexport.WriteNDJSON(bundle, outPath); err != nil {
-		http.Error(w, "write bundle: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	// Log export event for each item in the case.
-	items := s.pd.GetItems(req.CaseNumber)
-	for _, item := range items {
-		_ = s.pd.RecordExport(item.ID, req.Actor, bundle.BundleID)
-	}
-	writeJSON(w, map[string]interface{}{
-		"bundle_id":    bundle.BundleID,
-		"case_number":  bundle.CaseNumber,
-		"entry_count":  bundle.EntryCount,
-		"sha256_chain": bundle.SHA256Chain,
-		"signed":       bundle.Signature != "",
-		"path":         outPath,
-	})
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -808,13 +479,6 @@ func saveConfig(dir string, cfg Config) error {
 	return os.WriteFile(filepath.Join(dir, "config.json"), data, 0600)
 }
 
-func writeJSON(w http.ResponseWriter, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	_ = enc.Encode(v)
-}
-
 func info(format string, args ...interface{}) {
 	fmt.Printf("[witness-pd] "+format+"\n", args...)
 }
@@ -829,20 +493,20 @@ func usage() {
 
 Commands:
   init       [--department NAME] [--node ID]   Initialize PD store
-  status                                        Show system status
+  status     [--json]                           Show system status
   intake     --case C --desc D --actor A        Record evidence intake
   transfer   --item ID --from N --to N --actor  Transfer custody
   hold set   --item ID --reason R --actor A     Set legal hold
   hold release --item ID --actor A              Release legal hold
   export     --case C --actor A [--sign]        Generate court export bundle
-  serve      [--port PORT]                      Start dashboard (requires WITNESS_PD_TOKEN)
   keygen                                        Generate Ed25519 signing key pair
   version                                       Show version
 
 Environment:
-  WITNESS_PD_TOKEN    Required for 'serve' — dashboard auth token
   WITNESS_PD_SIGN_KEY Ed25519 private key hex for signing exports
   WITNESS_PD_DIR      Override data directory (default: ~/.witness-pd)
+
+Dashboard replacement: witness-pd status --json
 
 `, version)
 	// Silence unused import warning at compile time — roles is used for future expansion.

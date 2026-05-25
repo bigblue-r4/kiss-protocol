@@ -88,11 +88,47 @@ go test ./...
 go build ./...
 ```
 
+## Verifying a release
+
+All release artifacts (v2.x and later) are signed with [cosign](https://docs.sigstore.dev/cosign/overview/)
+using GitHub Actions OIDC (keyless signing — no long-lived keys):
+
+```bash
+# Download the artifact, signature, and certificate for your platform.
+# Replace linux_amd64 with your platform (linux_arm64, darwin_amd64, darwin_arm64).
+
+cosign verify-blob \
+  --certificate-identity-regexp \
+    "https://github.com/bigblue-r4/kiss-protocol/.github/workflows/release.yml" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  --signature witness_linux_amd64.sig \
+  --certificate witness_linux_amd64.pem \
+  witness_linux_amd64
+
+# Also verify the SHA-256 checksum:
+sha256sum -c witness_linux_amd64.sha256
+```
+
+## Reproducible builds
+
+The witness binary is built with `-trimpath -buildvcs=false` to produce
+byte-for-byte identical output given the same source and toolchain. Verify
+locally:
+
+```bash
+# Builds twice from clean and compares SHA-256 hashes.
+make verify-reproducible
+```
+
+A Nix flake is also provided for fully hermetic builds:
+
+```bash
+nix build .#witness
+```
+
 ## SGAIL remote sync (optional)
 
 Remote sync is opt-in and disabled by default. Prefer the `WITNESS_SGAIL_TOKEN` environment variable over storing the token in `~/.witness/config.json`, which is readable by any process running as your user.
-
-
 
 ## License
 

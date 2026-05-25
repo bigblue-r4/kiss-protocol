@@ -1,5 +1,10 @@
 // Package sgail implements the opt-in SGAIL remote sync client.
 // Nothing leaves the machine unless the user explicitly sets SGAILEnabled=true.
+//
+// Deprecated: SGAIL remote sync is superseded by the gossip peer mesh
+// (internal/gossip). This package remains functional for one release to allow
+// operators to migrate. It will be removed in the next major release.
+// See docs/migrating-from-sgail-sync.md for the migration guide.
 package sgail
 
 import (

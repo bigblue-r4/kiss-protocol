@@ -1,0 +1,68 @@
+[Unit]
+Description=SGAIL Labs Harborlight Witness — machine-state continuous monitor
+Documentation=https://github.com/bigblue-r4/kiss-protocol
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=witness
+Group=witness
+ExecStart=/usr/local/bin/witness start
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+
+# ── State directories (managed by systemd, mode 0700) ─────────────────────────
+StateDirectory=witness
+StateDirectoryMode=0700
+RuntimeDirectory=witness
+RuntimeDirectoryMode=0700
+
+# ── Privilege reduction ───────────────────────────────────────────────────────
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SecureBits=noroot noroot-locked
+
+# ── Filesystem isolation ──────────────────────────────────────────────────────
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/witness /run/witness
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+
+# ── Process isolation ─────────────────────────────────────────────────────────
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+LockPersonality=true
+
+# ── Memory protection ─────────────────────────────────────────────────────────
+MemoryDenyWriteExecute=true
+
+# ── Syscall filtering ─────────────────────────────────────────────────────────
+# @system-service is the standard allowlist for well-behaved non-privileged
+# daemons. The negative filter removes privileged subcategories witness never
+# needs: raw sockets, kernel keyring, realtime scheduling, and deprecated calls.
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete
+SystemCallErrorNumber=EPERM
+
+# The Go runtime requires these in addition to @system-service:
+SystemCallFilter=clone3 rseq
+
+# ── Environment ───────────────────────────────────────────────────────────────
+Environment=HOME=/var/lib/witness
+EnvironmentFile=-/etc/witness/witness.env
+
+[Install]
+WantedBy=multi-user.target

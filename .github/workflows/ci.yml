@@ -3,9 +3,46 @@ name: ci
 on:
   push:
   pull_request:
+  schedule:
+    # Nightly fuzz at 02:00 UTC — extended corpus run.
+    - cron: "0 2 * * *"
 
 jobs:
   test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Format check
+        run: test -z "$(gofmt -l .)"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Lint
+        if: matrix.os == 'ubuntu-latest'
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  reproducible-build:
+    name: reproducible build
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -14,19 +51,70 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Format check
-        run: |
-          test -z "$(gofmt -l .)"
-      - name: Test
-        run: |
-          go test ./...
-      - name: Build
-        run: |
-          go build ./...
-      - name: Vet
-        run: |
-          go vet ./...
-      - name: Lint
-        uses: golangci/golangci-lint-action@v6
+
+      - name: Verify reproducible build
+        run: make verify-reproducible
+
+  fuzz-short:
+    name: fuzz (short pass)
+    runs-on: ubuntu-latest
+    # Skip fuzz on the nightly schedule — the fuzz-nightly job handles that.
+    if: github.event_name != 'schedule'
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          version: latest
+          go-version-file: go.mod
+
+      - name: Fuzz soul
+        run: go test -fuzz=FuzzLoad -fuzztime=30s ./internal/soul/
+
+      - name: Fuzz store
+        run: go test -fuzz=FuzzAppend -fuzztime=30s ./internal/store/
+
+      - name: Fuzz gossip
+        run: go test -fuzz=FuzzDecodePacket -fuzztime=30s ./internal/gossip/
+
+      - name: Fuzz mirror
+        run: go test -fuzz=FuzzPushJSON -fuzztime=30s ./internal/mirror/
+
+  fuzz-nightly:
+    name: fuzz (nightly long pass)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Fuzz soul
+        run: go test -fuzz=FuzzLoad -fuzztime=5m ./internal/soul/
+
+      - name: Fuzz soul hash
+        run: go test -fuzz=FuzzHash -fuzztime=5m ./internal/soul/
+
+      - name: Fuzz store append
+        run: go test -fuzz=FuzzAppend -fuzztime=5m ./internal/store/
+
+      - name: Fuzz store read
+        run: go test -fuzz=FuzzReadAll -fuzztime=5m ./internal/store/
+
+      - name: Fuzz gossip decode
+        run: go test -fuzz=FuzzDecodePacket -fuzztime=5m ./internal/gossip/
+
+      - name: Fuzz gossip heartbeat
+        run: go test -fuzz=FuzzHeartbeatJSON -fuzztime=5m ./internal/gossip/
+
+      - name: Fuzz mirror push
+        run: go test -fuzz=FuzzPushJSON -fuzztime=5m ./internal/mirror/
+
+      - name: Fuzz mirror open
+        run: go test -fuzz=FuzzOpen -fuzztime=5m ./internal/mirror/
+
+      - name: Fuzz mirror file backend
+        run: go test -fuzz=FuzzFileBackend -fuzztime=5m ./internal/mirror/

@@ -135,12 +135,38 @@ if [[ -n "$SGAIL_ENDPOINT" ]]; then
     "$INSTALL_DIR/witness" enable-sync "${SGAIL_ARGS[@]}"
 fi
 
-# ── Step 6: Install systemd service (Linux only) ─────────────────────────────
+# ── Step 6: Create dedicated system user ─────────────────────────────────────
+create_witness_user_linux() {
+    if id witness &>/dev/null 2>&1; then
+        info "System user 'witness' already exists."
+        return
+    fi
+    useradd --system --no-create-home --home-dir /var/lib/witness \
+            --shell /bin/false --comment "SGAIL Harborlight Witness daemon" witness \
+        || { warn "Could not create system user 'witness' — service will run as root."; return; }
+    mkdir -p /var/lib/witness
+    chown witness:witness /var/lib/witness
+    chmod 0700 /var/lib/witness
+    info "System user 'witness' created (home: /var/lib/witness)"
+}
+
+# ── Step 7: Install init service ──────────────────────────────────────────────
 if [[ "$(uname -s)" == "Linux" ]] && command -v systemctl &>/dev/null; then
-    info "Installing systemd service…"
-    cat > "$SYSTEMD_DIR/witness.service" <<'SERVICE'
+    info "Installing hardened systemd service…"
+    [[ "$(id -u)" -eq 0 ]] && create_witness_user_linux || warn "Not root — skipping user creation"
+
+    UNIT_SRC="$SCRIPT_DIR/packaging/systemd/witness.service"
+    if [[ -f "$UNIT_SRC" ]]; then
+        mkdir -p /etc/witness
+        cp "$UNIT_SRC" "$SYSTEMD_DIR/witness.service"
+        chmod 0644 "$SYSTEMD_DIR/witness.service"
+        info "Installed hardened unit from $UNIT_SRC"
+    else
+        # Fallback inline unit (non-hardened) when packaging/ is not available.
+        warn "packaging/systemd/witness.service not found — installing minimal unit"
+        cat > "$SYSTEMD_DIR/witness.service" <<'SERVICE'
 [Unit]
-Description=SGAIL Labs Harborlight Firewall — machine-state continuous monitor
+Description=SGAIL Labs Harborlight Witness
 After=network.target
 StartLimitIntervalSec=60
 StartLimitBurst=5
@@ -150,34 +176,13 @@ Type=simple
 ExecStart=/usr/local/bin/witness start
 Restart=on-failure
 RestartSec=5s
-# The watchdog subprocess handles SIGKILL; give the main process time for death broadcast.
 TimeoutStopSec=15s
-# Tighten the environment — the service should not inherit user tokens.
-Environment=HOME=/root
 NoNewPrivileges=true
-ProtectSystem=full
 
 [Install]
 WantedBy=multi-user.target
 SERVICE
-
-    # Watchdog gets its own service so it can outlive the main service.
-    cat > "$SYSTEMD_DIR/witness-watchdog.service" <<'SERVICE'
-[Unit]
-Description=SGAIL Labs Harborlight Firewall Watchdog
-After=witness.service
-BindsTo=witness.service
-
-[Service]
-Type=simple
-# The main 'witness start' spawns the watchdog itself; this unit is a safety net
-# that ensures the watchdog is restarted if it dies independently.
-ExecStart=/bin/sleep infinity
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-SERVICE
+    fi
 
     systemctl daemon-reload
     systemctl enable witness.service
@@ -186,35 +191,24 @@ SERVICE
     info "Check status: systemctl status witness"
 
 elif [[ "$(uname -s)" == "Darwin" ]]; then
-    # macOS: launchd
-    PLIST="$HOME/Library/LaunchAgents/ai.sgail.harborlight.witness.plist"
-    info "Installing launchd agent → $PLIST"
-    cat > "$PLIST" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>             <string>ai.sgail.harborlight.witness</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/local/bin/witness</string>
-        <string>start</string>
-    </array>
-    <key>RunAtLoad</key>         <true/>
-    <key>KeepAlive</key>         <true/>
-    <key>StandardOutPath</key>   <string>/tmp/witness.out</string>
-    <key>StandardErrorPath</key> <string>/tmp/witness.err</string>
-</dict>
-</plist>
-PLIST
-    launchctl load "$PLIST"
-    info "launchd agent loaded."
+    PLIST_SRC="$SCRIPT_DIR/packaging/launchd/ai.sgail.harborlight.witness.plist"
+    PLIST_DST="/Library/LaunchDaemons/ai.sgail.harborlight.witness.plist"
+    if [[ -f "$PLIST_SRC" ]]; then
+        info "Installing hardened launchd daemon → $PLIST_DST"
+        mkdir -p /var/log/witness
+        cp "$PLIST_SRC" "$PLIST_DST"
+        chmod 0644 "$PLIST_DST"
+        chown root:wheel "$PLIST_DST"
+        launchctl load -w "$PLIST_DST"
+        info "LaunchDaemon loaded."
+    else
+        warn "packaging/launchd plist not found — service not installed."
+    fi
 else
     warn "Could not detect init system. Start the daemon manually: witness start"
 fi
 
-# ── Step 7: Install desktop file ─────────────────────────────────────────────
+# ── Step 8: Install desktop file ─────────────────────────────────────────────
 if [[ "$(uname -s)" == "Linux" ]]; then
     DESKTOP_SRC="$SCRIPT_DIR/witness.desktop"
     if [[ -f "$DESKTOP_SRC" ]]; then

@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+    <key>Label</key>
+    <string>ai.sgail.harborlight.witness</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/witness</string>
+        <string>start</string>
+    </array>
+
+    <!-- Run as a dedicated system user created by the installer -->
+    <key>UserName</key>
+    <string>_witness</string>
+    <key>GroupName</key>
+    <string>_witness</string>
+
+    <!-- Lifecycle -->
+    <key>RunAtLoad</key>       <true/>
+    <key>KeepAlive</key>       <true/>
+    <key>ProcessType</key>     <string>Background</string>
+    <key>LowPriorityIO</key>   <true/>
+
+    <!-- Hard resource limits — contain runaway behavior -->
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>     <integer>512</integer>
+        <key>NumberOfProcesses</key> <integer>64</integer>
+        <!-- 256 MB address space ceiling -->
+        <key>VirtualMemory</key>     <integer>268435456</integer>
+    </dict>
+
+    <!-- Soft resource limits (advisory, kernel may grant more) -->
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>     <integer>256</integer>
+    </dict>
+
+    <!-- Environment -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key> <string>/var/lib/witness</string>
+    </dict>
+
+    <key>WorkingDirectory</key>  <string>/var/lib/witness</string>
+
+    <!-- Log output — /var/log/witness owned by _witness -->
+    <key>StandardOutPath</key>   <string>/var/log/witness/witness.out</string>
+    <key>StandardErrorPath</key> <string>/var/log/witness/witness.err</string>
+
+    <!-- Throttle restart after repeated crashes -->
+    <key>ThrottleInterval</key>  <integer>10</integer>
+
+</dict>
+</plist>

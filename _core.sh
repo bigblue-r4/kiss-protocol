@@ -257,6 +257,128 @@ print_summary() {
   echo ""
 }
 
+# ── Dedicated system user ─────────────────────────────────────────────────────
+# Creates a locked-down system account for the witness daemon.
+# Linux: witness / no shell / home /var/lib/witness
+# macOS: _witness (underscore prefix follows Apple convention)
+create_witness_user() {
+  if [[ "$OS" == "linux" ]]; then
+    if id witness &>/dev/null 2>&1; then
+      info "System user 'witness' already exists."
+      return
+    fi
+    if ! sudo useradd \
+        --system \
+        --no-create-home \
+        --home-dir /var/lib/witness \
+        --shell /bin/false \
+        --comment "SGAIL Harborlight Witness daemon" \
+        witness 2>/dev/null; then
+      warn "Could not create system user 'witness' — continuing without dedicated user."
+      return
+    fi
+    sudo mkdir -p /var/lib/witness
+    sudo chown witness:witness /var/lib/witness
+    sudo chmod 0700 /var/lib/witness
+    ok "Created system user 'witness' (home: /var/lib/witness)"
+
+  elif [[ "$OS" == "macos" ]]; then
+    if dscl . -read /Users/_witness &>/dev/null 2>&1; then
+      info "System user '_witness' already exists."
+      return
+    fi
+    # Find an unused UID in the 400-499 range (Apple reserved system range)
+    local uid=450
+    while dscl . -search /Users UniqueID "$uid" 2>/dev/null | grep -q UniqueID; do
+      (( uid++ ))
+    done
+    sudo dscl . -create /Groups/_witness
+    sudo dscl . -create /Groups/_witness PrimaryGroupID "$uid"
+    sudo dscl . -create /Groups/_witness RealName "SGAIL Harborlight Witness"
+
+    sudo dscl . -create /Users/_witness
+    sudo dscl . -create /Users/_witness UniqueID "$uid"
+    sudo dscl . -create /Users/_witness PrimaryGroupID "$uid"
+    sudo dscl . -create /Users/_witness UserShell /usr/bin/false
+    sudo dscl . -create /Users/_witness RealName "SGAIL Harborlight Witness"
+    sudo dscl . -create /Users/_witness NFSHomeDirectory /var/lib/witness
+    sudo dscl . -create /Users/_witness IsHidden 1
+
+    sudo mkdir -p /var/lib/witness
+    sudo chown _witness:_witness /var/lib/witness
+    sudo chmod 0700 /var/lib/witness
+    ok "Created system user '_witness' (UID $uid, home: /var/lib/witness)"
+  fi
+}
+
+# ── Service unit installation ─────────────────────────────────────────────────
+install_service_unit() {
+  if [[ "$OS" == "linux" ]] && command -v systemctl &>/dev/null; then
+    local unit_src="$SCRIPT_DIR/packaging/systemd/witness.service"
+    local unit_dst="/etc/systemd/system/witness.service"
+
+    if [[ ! -f "$unit_src" ]]; then
+      warn "Hardened unit not found at $unit_src — falling back to inline service."
+      install_service_unit_inline_linux
+      return
+    fi
+
+    sudo mkdir -p /etc/witness
+    sudo cp "$unit_src" "$unit_dst"
+    sudo chmod 0644 "$unit_dst"
+    sudo systemctl daemon-reload
+    sudo systemctl enable witness.service
+    sudo systemctl start  witness.service
+    ok "Systemd service enabled and started (hardened unit)."
+    info "Check status: systemctl status witness"
+
+  elif [[ "$OS" == "macos" ]]; then
+    local plist_src="$SCRIPT_DIR/packaging/launchd/ai.sgail.harborlight.witness.plist"
+    local plist_dst="/Library/LaunchDaemons/ai.sgail.harborlight.witness.plist"
+
+    if [[ ! -f "$plist_src" ]]; then
+      warn "Hardened plist not found at $plist_src — skipping service install."
+      return
+    fi
+
+    sudo mkdir -p /var/log/witness
+    sudo chown _witness:_witness /var/log/witness 2>/dev/null || true
+    sudo cp "$plist_src" "$plist_dst"
+    sudo chmod 0644 "$plist_dst"
+    sudo chown root:wheel "$plist_dst"
+    sudo launchctl load -w "$plist_dst"
+    ok "LaunchDaemon loaded: $plist_dst"
+  else
+    warn "Could not detect init system. Start the daemon manually: witness start"
+  fi
+}
+
+install_service_unit_inline_linux() {
+  # Fallback: write a minimal (non-hardened) unit when packaging/ dir is absent.
+  sudo tee /etc/systemd/system/witness.service > /dev/null <<'SERVICE'
+[Unit]
+Description=SGAIL Labs Harborlight Witness
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/witness start
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+  sudo systemctl daemon-reload
+  sudo systemctl enable witness.service
+  sudo systemctl start  witness.service
+  warn "Installed minimal (non-hardened) systemd unit. Re-run from the full package for full hardening."
+}
+
 # ── Master run sequence ───────────────────────────────────────────────────────
 run_installer() {
   print_banner
@@ -274,5 +396,11 @@ run_installer() {
   done
 
   update_path
+
+  echo ""
+  info "Setting up system user and service..."
+  create_witness_user
+  install_service_unit
+
   print_summary
 }
