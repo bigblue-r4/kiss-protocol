@@ -20,6 +20,7 @@ type Config struct {
 	SyncIntervalSec  int    `json:"sync_interval_sec"`
 	DriftIntervalSec int    `json:"drift_interval_sec"`
 	GossipListenAddr string `json:"gossip_listen_addr,omitempty"` // UDP addr; default ":9273"
+	MirrorURL        string `json:"mirror_url,omitempty"`         // transparency mirror endpoint
 }
 
 // DefaultConfig returns a config with sensible defaults.

@@ -15,6 +15,8 @@ package main
 
 import (
 	"bufio"
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -23,8 +25,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	"context"
 
 	"github.com/bigblue-r4/kiss-protocol/internal/anomaly"
 	"github.com/bigblue-r4/kiss-protocol/internal/config"
@@ -35,6 +35,7 @@ import (
 	"github.com/bigblue-r4/kiss-protocol/internal/gossip"
 	"github.com/bigblue-r4/kiss-protocol/internal/machid"
 	"github.com/bigblue-r4/kiss-protocol/internal/migrate"
+	"github.com/bigblue-r4/kiss-protocol/internal/mirror"
 	"github.com/bigblue-r4/kiss-protocol/internal/pipelock"
 	"github.com/bigblue-r4/kiss-protocol/internal/sgail"
 	"github.com/bigblue-r4/kiss-protocol/internal/signer"
@@ -64,6 +65,8 @@ func main() {
 		cmdMigrate()
 	case "soul":
 		cmdSoul()
+	case "audit":
+		cmdAudit()
 	case "peer":
 		cmdPeer()
 	case "enable-sync":
@@ -90,6 +93,7 @@ Usage:
   witness migrate                 Import v1 log into v2 Merkle log (one-shot)
   witness soul sign               Sign the soul file with the configured signer
   witness soul verify             Verify soul file signature against allowlist
+  witness audit                   Compare local Merkle log to transparency mirror
   witness peer list               List configured gossip peers
   witness peer add <l> <addr> <k> Add a gossip peer (label, UDP addr, hex pubkey)
   witness peer remove <label>     Remove a gossip peer
@@ -369,6 +373,17 @@ func cmdStart() {
 		}
 	}
 
+	// ── Transparency mirror ────────────────────────────────────────────────
+	var mirrorBackend mirror.Mirror
+	if cfg.MirrorURL != "" {
+		if mb, err := mirror.Open(cfg.MirrorURL); err != nil {
+			warn("mirror open: %v (mirror push disabled)", err)
+		} else {
+			mirrorBackend = mb
+			fmt.Printf("[witness] Mirror push enabled → %s\n", cfg.MirrorURL)
+		}
+	}
+
 	// ── Pipelock integration ───────────────────────────────────────────────
 	plCfg := pipelock.DefaultConfig(cfg.PrimaryDir)
 	plRunner := pipelock.NewRunner(plCfg)
@@ -405,6 +420,25 @@ func cmdStart() {
 
 	fmt.Printf("[witness] Daemon started (PID %d)\n", os.Getpid())
 	fmt.Printf("[witness] Genesis: %s\n", snap.Hash)
+
+	// tryPushMirror reads the on-disk tree-head.json and pushes it to the
+	// configured mirror in a fire-and-forget goroutine. Errors are logged.
+	tryPushMirror := func() {
+		if mirrorBackend == nil {
+			return
+		}
+		data, err := os.ReadFile(filepath.Join(cfg.PrimaryDir, "tree-head.json"))
+		if err != nil {
+			return
+		}
+		go func() {
+			if err := mirrorBackend.Push(json.RawMessage(data)); err != nil {
+				warn("mirror push: %v", err)
+			}
+		}()
+	}
+	// Push immediately after daemon_start so the mirror reflects the current head.
+	tryPushMirror()
 
 	driftTick := time.NewTicker(time.Duration(cfg.DriftIntervalSec) * time.Second)
 	syncTick := time.NewTicker(time.Duration(cfg.SyncIntervalSec) * time.Second)
@@ -465,6 +499,7 @@ func cmdStart() {
 			} else {
 				_ = s.Append("INFO", "drift_clean", "drift", nil)
 			}
+			tryPushMirror()
 
 		// ── SGAIL sync ─────────────────────────────────────────────────────
 		case <-syncTick.C:
