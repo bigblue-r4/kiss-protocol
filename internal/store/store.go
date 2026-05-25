@@ -13,6 +13,7 @@
 package store
 
 import (
+	"crypto/ed25519"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/bigblue-r4/kiss-protocol/internal/encrypt"
 	"github.com/bigblue-r4/kiss-protocol/internal/merkle"
+	"github.com/bigblue-r4/kiss-protocol/internal/signer"
 )
 
 const (
@@ -51,7 +53,9 @@ type TreeHead struct {
 	Size      uint64 `json:"size"`
 	Root      string `json:"root"` // hex-encoded 32-byte BLAKE3 root
 	Timestamp string `json:"ts"`
-	MAC       string `json:"mac"` // BLAKE3-keyed(machineKey, size_be8 || root_bytes)
+	MAC       string `json:"mac"`                  // BLAKE3-keyed(machineKey, size_be8 || root)
+	Signature string `json:"sig,omitempty"`        // ed25519 sig over (size_be8 || root), Phase 2+
+	SignerKey string `json:"signer_key,omitempty"` // hex pubkey corresponding to Signature
 }
 
 // Store is an encrypted, append-only Merkle log.
@@ -59,15 +63,18 @@ type Store struct {
 	mu     sync.Mutex
 	dir    string
 	key    []byte
+	s      signer.Signer // nil → BLAKE3-MAC mode (Phase 1)
 	seq    uint64
 	leaves [][32]byte
 	f      *os.File
 }
 
 // Open opens or creates the log at dir/witness.log.
+// s is the signer used to authenticate tree heads. Pass nil to use the
+// Phase 1 BLAKE3-keyed MAC only (acceptable for read-only opens or testing).
 // If existing entries are present it rebuilds the Merkle tree and verifies
 // the stored tree head. Returns an error if integrity fails.
-func Open(dir string, key []byte) (*Store, error) {
+func Open(dir string, key []byte, s signer.Signer) (*Store, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
@@ -85,7 +92,7 @@ func Open(dir string, key []byte) (*Store, error) {
 
 	// Verify stored tree head if one exists.
 	if len(leaves) > 0 {
-		if err := verifyTreeHead(dir, key, leaves); err != nil {
+		if err := verifyTreeHead(dir, key, s, leaves); err != nil {
 			return nil, fmt.Errorf("store: tree head integrity: %w", err)
 		}
 	}
@@ -101,7 +108,7 @@ func Open(dir string, key []byte) (*Store, error) {
 		return nil, err
 	}
 
-	return &Store{dir: dir, key: key, seq: seq, leaves: leaves, f: f}, nil
+	return &Store{dir: dir, key: key, s: s, seq: seq, leaves: leaves, f: f}, nil
 }
 
 // Append encrypts and appends a new entry to the log, then updates the tree head.
@@ -144,7 +151,7 @@ func (s *Store) Append(level, event, source string, data interface{}) error {
 	}
 
 	s.leaves = append(s.leaves, leafHash(e))
-	return writeTreeHead(s.dir, s.key, s.leaves)
+	return writeTreeHead(s.dir, s.key, s.s, s.leaves)
 }
 
 // Snapshot flushes and returns the raw encrypted log bytes.
@@ -197,7 +204,7 @@ func (s *Store) VerifyIntegrity() (uint64, error) {
 	if len(leaves) == 0 {
 		return 0, nil
 	}
-	if err := verifyTreeHead(s.dir, s.key, leaves); err != nil {
+	if err := verifyTreeHead(s.dir, s.key, s.s, leaves); err != nil {
 		return 0, err
 	}
 	return uint64(len(leaves)), nil
@@ -277,7 +284,8 @@ func leafHash(e Entry) [32]byte {
 }
 
 // writeTreeHead atomically writes the tree head file.
-func writeTreeHead(dir string, key []byte, leaves [][32]byte) error {
+// If s is non-nil, an ed25519 signature is included alongside the BLAKE3 MAC.
+func writeTreeHead(dir string, key []byte, s signer.Signer, leaves [][32]byte) error {
 	root := merkle.Root(leaves)
 	mac := computeMAC(key, uint64(len(leaves)), root)
 
@@ -287,6 +295,17 @@ func writeTreeHead(dir string, key []byte, leaves [][32]byte) error {
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		MAC:       hex.EncodeToString(mac[:]),
 	}
+
+	if s != nil {
+		sigInput := treeHeadSigInput(uint64(len(leaves)), root)
+		sig, err := s.Sign(sigInput)
+		if err != nil {
+			return fmt.Errorf("sign tree head: %w", err)
+		}
+		head.Signature = hex.EncodeToString(sig)
+		head.SignerKey = hex.EncodeToString(s.PublicKey())
+	}
+
 	data, err := json.MarshalIndent(head, "", "  ")
 	if err != nil {
 		return err
@@ -299,13 +318,14 @@ func writeTreeHead(dir string, key []byte, leaves [][32]byte) error {
 }
 
 // verifyTreeHead reads tree-head.json and checks it against the given leaf set.
-func verifyTreeHead(dir string, key []byte, leaves [][32]byte) error {
+// Always verifies the BLAKE3 MAC. If a Signature field is present, also verifies
+// the ed25519 signature. If s is non-nil and no sig is present, logs a warning
+// but does not fail (allows Phase 1 → Phase 2 transition without a re-init).
+func verifyTreeHead(dir string, key []byte, s signer.Signer, leaves [][32]byte) error {
 	data, err := os.ReadFile(filepath.Join(dir, treeHeadFilename))
 	if err != nil {
 		if os.IsNotExist(err) {
-			// No tree head yet — first open after a v1 install. Acceptable:
-			// writeTreeHead will create it on the next Append.
-			return nil
+			return nil // no tree head yet; created on first Append
 		}
 		return err
 	}
@@ -322,11 +342,11 @@ func verifyTreeHead(dir string, key []byte, leaves [][32]byte) error {
 	var storedRootArr [32]byte
 	copy(storedRootArr[:], storedRoot)
 	if root != storedRootArr {
-		return fmt.Errorf("tree head root mismatch: log has been tampered (expected %s, got %s)",
+		return fmt.Errorf("tree head root mismatch: log tampered (stored %s, computed %s)",
 			head.Root, hex.EncodeToString(root[:]))
 	}
 	if head.Size != uint64(len(leaves)) {
-		return fmt.Errorf("tree head size mismatch: expected %d leaves, log has %d", head.Size, len(leaves))
+		return fmt.Errorf("tree head size mismatch: stored %d, log has %d", head.Size, len(leaves))
 	}
 
 	storedMAC, err := hex.DecodeString(head.MAC)
@@ -335,19 +355,42 @@ func verifyTreeHead(dir string, key []byte, leaves [][32]byte) error {
 	}
 	expected := computeMAC(key, uint64(len(leaves)), root)
 	if !macEqual(expected[:], storedMAC) {
-		return errors.New("tree head MAC verification failed — tree head may have been tampered")
+		return errors.New("tree head MAC failed — tree head may have been tampered")
 	}
+
+	// Ed25519 signature check (Phase 2+).
+	if head.Signature != "" {
+		rawSig, err := hex.DecodeString(head.Signature)
+		if err != nil || len(rawSig) != ed25519.SignatureSize {
+			return errors.New("tree head: malformed signature")
+		}
+		pubBytes, err := hex.DecodeString(head.SignerKey)
+		if err != nil || len(pubBytes) != ed25519.PublicKeySize {
+			return errors.New("tree head: malformed signer_key")
+		}
+		sigInput := treeHeadSigInput(uint64(len(leaves)), root)
+		if !ed25519.Verify(ed25519.PublicKey(pubBytes), sigInput, rawSig) {
+			return errors.New("tree head signature verification failed")
+		}
+	}
+
 	return nil
 }
 
-// computeMAC returns BLAKE3-keyed(key, size_be8 || root).
-// The key must be exactly 32 bytes (the machine-derived AES key).
-func computeMAC(key []byte, size uint64, root [32]byte) [32]byte {
+// treeHeadSigInput returns the byte slice that is signed/verified for a tree head.
+func treeHeadSigInput(size uint64, root [32]byte) []byte {
 	var sizeBuf [8]byte
 	binary.BigEndian.PutUint64(sizeBuf[:], size)
+	input := make([]byte, 8+32)
+	copy(input[:8], sizeBuf[:])
+	copy(input[8:], root[:])
+	return input
+}
+
+// computeMAC returns BLAKE3-keyed(key, size_be8 || root).
+func computeMAC(key []byte, size uint64, root [32]byte) [32]byte {
 	h := blake3.New(32, key)
-	h.Write(sizeBuf[:])
-	h.Write(root[:])
+	h.Write(treeHeadSigInput(size, root))
 	var out [32]byte
 	copy(out[:], h.Sum(nil))
 	return out

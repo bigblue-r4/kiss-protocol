@@ -57,7 +57,7 @@ func Open(dir string, key []byte) (*PDStore, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	s, err := store.Open(dir, key)
+	s, err := store.Open(dir, key, nil)
 	if err != nil {
 		return nil, err
 	}

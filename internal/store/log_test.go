@@ -1,6 +1,8 @@
 package store
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -8,7 +10,28 @@ import (
 	"testing"
 
 	"github.com/bigblue-r4/kiss-protocol/internal/merkle"
+	"github.com/bigblue-r4/kiss-protocol/internal/signer"
 )
+
+// testDevSigner wraps a fresh ed25519 key without the dev banner noise.
+type testDevSigner struct {
+	priv ed25519.PrivateKey
+	pub  ed25519.PublicKey
+}
+
+func newTestDevSigner(t *testing.T) *testDevSigner {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("keygen: %v", err)
+	}
+	return &testDevSigner{priv: priv, pub: pub}
+}
+
+func (s *testDevSigner) Sign(msg []byte) ([]byte, error) { return ed25519.Sign(s.priv, msg), nil }
+func (s *testDevSigner) PublicKey() ed25519.PublicKey    { return s.pub }
+
+var _ signer.Signer = (*testDevSigner)(nil)
 
 func testKey() []byte {
 	k := make([]byte, 32)
@@ -21,7 +44,7 @@ func testKey() []byte {
 func openFresh(t *testing.T) (*Store, string) {
 	t.Helper()
 	dir := t.TempDir()
-	s, err := Open(dir, testKey())
+	s, err := Open(dir, testKey(), nil)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -72,7 +95,7 @@ func TestTamperLeafDetected(t *testing.T) {
 	_, dir := openFresh(t)
 	key := testKey()
 
-	s2, _ := Open(dir, key)
+	s2, _ := Open(dir, key, nil)
 	for i := 0; i < 4; i++ {
 		_ = s2.Append("INFO", "ev", "src", nil)
 	}
@@ -84,7 +107,7 @@ func TestTamperLeafDetected(t *testing.T) {
 	data[len(data)/2] ^= 0xff
 	_ = os.WriteFile(logPath, data, 0600)
 
-	s3, err := Open(dir, key)
+	s3, err := Open(dir, key, nil)
 	if err == nil {
 		_ = s3.Close()
 		t.Fatal("expected error opening tampered log, got nil")
@@ -95,7 +118,7 @@ func TestTruncationDetected(t *testing.T) {
 	_, dir := openFresh(t)
 	key := testKey()
 
-	s2, _ := Open(dir, key)
+	s2, _ := Open(dir, key, nil)
 	for i := 0; i < 6; i++ {
 		_ = s2.Append("INFO", "ev", "src", nil)
 	}
@@ -108,7 +131,7 @@ func TestTruncationDetected(t *testing.T) {
 	_ = os.WriteFile(logPath, data[:len(data)/2], 0600)
 
 	// Tree head still claims 6 entries but log now has fewer — mismatch.
-	s3, err := Open(dir, key)
+	s3, err := Open(dir, key, nil)
 	if err == nil {
 		_ = s3.Close()
 		t.Fatal("expected error opening truncated log, got nil")
@@ -119,7 +142,7 @@ func TestTreeHeadTamperDetected(t *testing.T) {
 	_, dir := openFresh(t)
 	key := testKey()
 
-	s2, _ := Open(dir, key)
+	s2, _ := Open(dir, key, nil)
 	_ = s2.Append("INFO", "ev", "src", nil)
 	_ = s2.Close()
 
@@ -129,7 +152,7 @@ func TestTreeHeadTamperDetected(t *testing.T) {
 	data[len(data)/2] ^= 0xff
 	_ = os.WriteFile(thPath, data, 0600)
 
-	s3, err := Open(dir, key)
+	s3, err := Open(dir, key, nil)
 	if err == nil {
 		_ = s3.Close()
 		t.Fatal("expected error opening store with tampered tree head, got nil")
@@ -171,7 +194,7 @@ func TestReorderDetected(t *testing.T) {
 	_, dir := openFresh(t)
 	key := testKey()
 
-	s2, _ := Open(dir, key)
+	s2, _ := Open(dir, key, nil)
 	for i := 0; i < 4; i++ {
 		_ = s2.Append("INFO", "ev", "src", map[string]int{"i": i})
 	}
@@ -186,10 +209,59 @@ func TestReorderDetected(t *testing.T) {
 	records[0], records[1] = records[1], records[0]
 	writeRawRecords(t, logPath, records)
 
-	s3, err := Open(dir, key)
+	s3, err := Open(dir, key, nil)
 	if err == nil {
 		_ = s3.Close()
 		t.Fatal("expected error after reordering log entries, got nil")
+	}
+}
+
+func TestSignedTreeHead(t *testing.T) {
+	dir := t.TempDir()
+	key := testKey()
+	sg := newTestDevSigner(t)
+
+	st, err := Open(dir, key, sg)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := st.Append("INFO", "ev", "src", nil); err != nil {
+			t.Fatalf("Append %d: %v", i, err)
+		}
+	}
+	_ = st.Close()
+
+	// Re-open with same signer — must pass.
+	st2, err := Open(dir, key, sg)
+	if err != nil {
+		t.Fatalf("re-open with signer: %v", err)
+	}
+	_ = st2.Close()
+
+	// Re-open with nil signer — MAC is always verified; sig present but signer arg not required.
+	st3, err := Open(dir, key, nil)
+	if err != nil {
+		t.Fatalf("re-open with nil signer: %v", err)
+	}
+	_ = st3.Close()
+
+	// Tamper the signature in the tree head file — must be detected.
+	thPath := filepath.Join(dir, treeHeadFilename)
+	raw, _ := os.ReadFile(thPath)
+	var head TreeHead
+	_ = json.Unmarshal(raw, &head)
+	// Corrupt the last 4 hex chars of the signature.
+	if len(head.Signature) >= 4 {
+		head.Signature = head.Signature[:len(head.Signature)-4] + "0000"
+	}
+	patched, _ := json.MarshalIndent(head, "", "  ")
+	_ = os.WriteFile(thPath, patched, 0600)
+
+	st4, err := Open(dir, key, nil)
+	if err == nil {
+		_ = st4.Close()
+		t.Fatal("expected error after signature tampered, got nil")
 	}
 }
 

@@ -38,7 +38,7 @@ func cmdProve() {
 		fatal("derive key: %v", err)
 	}
 
-	s, err := store.Open(cfg.PrimaryDir, key)
+	s, err := store.Open(cfg.PrimaryDir, key, nil)
 	if err != nil {
 		fatal("open store: %v", err)
 	}

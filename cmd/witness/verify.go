@@ -27,7 +27,7 @@ func cmdVerify() {
 		fatal("derive key: %v", err)
 	}
 
-	s, err := store.Open(cfg.PrimaryDir, key)
+	s, err := store.Open(cfg.PrimaryDir, key, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[witness] INTEGRITY FAILURE: %v\n", err)
 		os.Exit(1)

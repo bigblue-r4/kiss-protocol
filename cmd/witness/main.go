@@ -34,6 +34,7 @@ import (
 	"github.com/bigblue-r4/kiss-protocol/internal/migrate"
 	"github.com/bigblue-r4/kiss-protocol/internal/pipelock"
 	"github.com/bigblue-r4/kiss-protocol/internal/sgail"
+	"github.com/bigblue-r4/kiss-protocol/internal/signer"
 	"github.com/bigblue-r4/kiss-protocol/internal/soul"
 	"github.com/bigblue-r4/kiss-protocol/internal/store"
 )
@@ -58,6 +59,8 @@ func main() {
 		cmdProve()
 	case "migrate":
 		cmdMigrate()
+	case "soul":
+		cmdSoul()
 	case "enable-sync":
 		cmdEnableSync()
 	case "watchdog":
@@ -75,11 +78,13 @@ func usage() {
 
 Usage:
   witness init             Take genesis snapshot, initialize Merkle log
-  witness start            Start the continuous witness daemon
+  witness start [--dev]    Start the continuous witness daemon
   witness status           Show current witness status
   witness verify           Walk Merkle log and verify integrity
   witness prove <index>    Emit inclusion proof for leaf at index
   witness migrate          Import v1 log into v2 Merkle log (one-shot)
+  witness soul sign        Sign the soul file with the configured signer
+  witness soul verify      Verify the soul file signature against the allowlist
   witness enable-sync      Configure opt-in SGAIL Labs remote sync
   witness version          Print version
 
@@ -202,7 +207,7 @@ func cmdInit() {
 	mustWrite(filepath.Join(cfg.PrimaryDir, "genesis.enc"), snapEnc)
 
 	// ── Open the primary log and write genesis entry (entry zero) ─────────
-	s, err := store.Open(cfg.PrimaryDir, key)
+	s, err := store.Open(cfg.PrimaryDir, key, nil)
 	if err != nil {
 		fatal("open store: %v", err)
 	}
@@ -262,6 +267,13 @@ func cmdInit() {
 // ── start ─────────────────────────────────────────────────────────────────────
 
 func cmdStart() {
+	devMode := false
+	for _, arg := range os.Args[2:] {
+		if arg == "--dev" {
+			devMode = true
+		}
+	}
+
 	mid := machid.Get()
 	cfg, err := config.Load(config.Path())
 	if err != nil {
@@ -272,6 +284,12 @@ func cmdStart() {
 	if err != nil {
 		fatal("derive key: %v", err)
 	}
+
+	// ── Resolve signer ────────────────────────────────────────────────────
+	signerInst := resolveSigner(devMode, witnessDir())
+
+	// ── Soul signature verification ───────────────────────────────────────
+	checkSoulSignature(soul.Path(), devMode)
 
 	// Load and verify genesis.
 	snapEncBytes, err := os.ReadFile(filepath.Join(cfg.PrimaryDir, "genesis.enc"))
@@ -290,8 +308,8 @@ func cmdStart() {
 		fatal("CRITICAL: genesis integrity check failed — possible tampering detected")
 	}
 
-	// Open primary log.
-	s, err := store.Open(cfg.PrimaryDir, key)
+	// Open primary log with the configured signer.
+	s, err := store.Open(cfg.PrimaryDir, key, signerInst)
 	if err != nil {
 		fatal("open store: %v", err)
 	}
@@ -553,7 +571,7 @@ func cmdStatus() {
 	_ = agentCount
 
 	// Build tree head for display.
-	s, err := store.Open(cfg.PrimaryDir, key)
+	s, err := store.Open(cfg.PrimaryDir, key, nil)
 	var treeSize uint64
 	var treeRoot string
 	var integrityStatus string
@@ -666,6 +684,49 @@ func spawnWatchdog(mid, primaryDir, sgailEndpoint, sgailToken string) {
 	_ = proc.Release()
 }
 
+// ── soul ──────────────────────────────────────────────────────────────────────
+
+func cmdSoul() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: witness soul <sign|verify> [--dev]")
+		os.Exit(1)
+	}
+	devMode := false
+	for _, arg := range os.Args[3:] {
+		if arg == "--dev" {
+			devMode = true
+		}
+	}
+	switch os.Args[2] {
+	case "sign":
+		s := resolveSigner(devMode, witnessDir())
+		if s == nil {
+			fatal("no signer available; use --dev or build with -tags piv")
+		}
+		if err := soul.SignSoul(soul.Path(), s); err != nil {
+			fatal("soul sign: %v", err)
+		}
+		if err := soul.AppendAllowlist(soul.AllowlistPath(), "operator", s.PublicKey()); err != nil {
+			warn("could not update allowlist: %v", err)
+		}
+		fmt.Printf("[witness] Soul file signed: %s\n", soul.SigPath(soul.Path()))
+		fmt.Printf("[witness] Signer public key added to allowlist: %s\n", soul.AllowlistPath())
+	case "verify":
+		allowlist, err := soul.LoadAllowlist(soul.AllowlistPath())
+		if err != nil {
+			fatal("load allowlist: %v", err)
+		}
+		if err := soul.VerifySoulSignature(soul.Path(), allowlist); err != nil {
+			fmt.Fprintf(os.Stderr, "[witness] SOUL SIGNATURE INVALID: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("[witness] Soul signature OK: %s\n", soul.Path())
+	default:
+		fmt.Fprintf(os.Stderr, "unknown soul subcommand: %s\n", os.Args[2])
+		os.Exit(1)
+	}
+}
+
 // ── migrate ───────────────────────────────────────────────────────────────────
 
 func cmdMigrate() {
@@ -685,7 +746,7 @@ func cmdMigrate() {
 		srcDir = os.Args[2]
 	}
 
-	s, err := store.Open(cfg.PrimaryDir, key)
+	s, err := store.Open(cfg.PrimaryDir, key, nil)
 	if err != nil {
 		fatal("open store: %v", err)
 	}
@@ -703,6 +764,74 @@ func cmdMigrate() {
 		fmt.Printf("  Skipped     : %d (could not decode)\n", result.Skipped)
 	}
 	fmt.Printf("  Boundary    : v1_import_boundary leaf appended\n")
+}
+
+// ── signer helpers ────────────────────────────────────────────────────────────
+
+// witnessDir returns the ~/.witness directory path.
+func witnessDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".witness")
+}
+
+// resolveSigner returns the active Signer based on mode.
+// Returns nil if no signer is available (MAC-only mode).
+func resolveSigner(devMode bool, keyDir string) signer.Signer {
+	if devMode {
+		s, err := signer.NewDev(keyDir)
+		if err != nil {
+			fatal("dev signer: %v", err)
+		}
+		return s
+	}
+	s, err := signer.NewPIV()
+	if err != nil {
+		warn("hardware signer unavailable: %v — tree heads will use BLAKE3-MAC only; use --dev for software signing", err)
+		return nil
+	}
+	return s
+}
+
+// checkSoulSignature verifies the soul file's detached ed25519 signature.
+// In dev mode, a missing or invalid signature is a warning, not a fatal error.
+// In production mode, a missing or invalid signature halts startup.
+func checkSoulSignature(soulPath string, devMode bool) {
+	allowlist, err := soul.LoadAllowlist(soul.AllowlistPath())
+	if err != nil {
+		if devMode {
+			warn("soul allowlist unavailable: %v (continuing in dev mode)", err)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "\n  ╔══════════════════════════════════════════════════════════════╗\n")
+		fmt.Fprintf(os.Stderr, "  ║  SOUL SIGNATURE VERIFICATION FAILED                          ║\n")
+		fmt.Fprintf(os.Stderr, "  ║  %s\n", padRight("  "+err.Error(), 61)+"║")
+		fmt.Fprintf(os.Stderr, "  ║  Run: witness soul sign --dev   (to sign with dev key)       ║\n")
+		fmt.Fprintf(os.Stderr, "  ╚══════════════════════════════════════════════════════════════╝\n\n")
+		os.Exit(1)
+	}
+	if err := soul.VerifySoulSignature(soulPath, allowlist); err != nil {
+		if devMode {
+			warn("soul signature invalid: %v (continuing in dev mode)", err)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "\n  ╔══════════════════════════════════════════════════════════════╗\n")
+		fmt.Fprintf(os.Stderr, "  ║  SOUL SIGNATURE VERIFICATION FAILED — DAEMON WILL NOT START  ║\n")
+		fmt.Fprintf(os.Stderr, "  ║  %s\n", padRight("  "+err.Error(), 61)+"║")
+		fmt.Fprintf(os.Stderr, "  ║  Run: witness soul sign   to sign the soul file.             ║\n")
+		fmt.Fprintf(os.Stderr, "  ╚══════════════════════════════════════════════════════════════╝\n\n")
+		os.Exit(1)
+	}
+	fmt.Println("[witness] Soul signature verified.")
+}
+
+func padRight(s string, n int) string {
+	for len(s) < n {
+		s += " "
+	}
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
 }
 
 func mustWrite(path string, data []byte) {
