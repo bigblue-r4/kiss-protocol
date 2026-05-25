@@ -1,0 +1,80 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write    # create GitHub release
+  id-token: write    # cosign OIDC keyless signing
+
+jobs:
+  release:
+    name: build and sign release artifacts
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Build cross-platform artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          REPRO="-trimpath -ldflags=-s\ -w -buildvcs=false"
+
+          for GOOS in linux darwin; do
+            for GOARCH in amd64 arm64; do
+              OUT="dist/witness_${GOOS}_${GOARCH}"
+              GOOS=$GOOS GOARCH=$GOARCH GOTOOLCHAIN=local \
+                go build -trimpath -ldflags="-s -w" -buildvcs=false \
+                -o "$OUT" ./cmd/witness
+              sha256sum "$OUT" > "${OUT}.sha256"
+            done
+          done
+
+      - name: Sign artifacts with cosign (keyless OIDC)
+        run: |
+          for f in dist/witness_*; do
+            [[ "$f" == *.sha256 ]] && continue
+            cosign sign-blob \
+              --yes \
+              --output-signature "${f}.sig" \
+              --output-certificate "${f}.pem" \
+              "$f"
+          done
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/witness_*
+          body: |
+            ## Verification
+
+            Verify any artifact with [cosign](https://docs.sigstore.dev/cosign/overview/):
+
+            ```bash
+            cosign verify-blob \
+              --certificate-identity-regexp "https://github.com/bigblue-r4/kiss-protocol/.github/workflows/release.yml" \
+              --certificate-oidc-issuer   "https://token.actions.githubusercontent.com" \
+              --signature witness_linux_amd64.sig \
+              --certificate witness_linux_amd64.pem \
+              witness_linux_amd64
+            ```
+
+            Replace `linux_amd64` with your platform (`linux_arm64`, `darwin_amd64`, `darwin_arm64`).
+
+            Verify the SHA-256 checksum:
+            ```bash
+            sha256sum -c witness_linux_amd64.sha256
+            ```
