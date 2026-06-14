@@ -51,7 +51,8 @@ type Entry struct {
 // TreeHead is the Merkle log head stored at tree-head.json.
 type TreeHead struct {
 	Size      uint64 `json:"size"`
-	Root      string `json:"root"` // hex-encoded 32-byte BLAKE3 root
+	Root      string `json:"root"`              // hex-encoded 32-byte BLAKE3 root
+	PrevRoot  string `json:"prev_root"`          // root of the immediately prior head; "" for size==0
 	Timestamp string `json:"ts"`
 	MAC       string `json:"mac"`                  // BLAKE3-keyed(machineKey, size_be8 || root)
 	Signature string `json:"sig,omitempty"`        // ed25519 sig over (size_be8 || root), Phase 2+
@@ -285,13 +286,22 @@ func leafHash(e Entry) [32]byte {
 
 // writeTreeHead atomically writes the tree head file.
 // If s is non-nil, an ed25519 signature is included alongside the BLAKE3 MAC.
+// prevRoot is the root of the previous tree head, enabling the enforcer and
+// the audit command to verify head chain continuity without re-reading the log.
 func writeTreeHead(dir string, key []byte, s signer.Signer, leaves [][32]byte) error {
 	root := merkle.Root(leaves)
 	mac := computeMAC(key, uint64(len(leaves)), root)
 
+	// Read the previous tree head's root for chain linkage.
+	prevRoot := ""
+	if existing, err := readStoredHead(dir); err == nil && existing.Root != "" {
+		prevRoot = existing.Root
+	}
+
 	head := TreeHead{
 		Size:      uint64(len(leaves)),
 		Root:      hex.EncodeToString(root[:]),
+		PrevRoot:  prevRoot,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		MAC:       hex.EncodeToString(mac[:]),
 	}
@@ -394,6 +404,17 @@ func computeMAC(key []byte, size uint64, root [32]byte) [32]byte {
 	var out [32]byte
 	copy(out[:], h.Sum(nil))
 	return out
+}
+
+// readStoredHead reads the on-disk tree-head.json without verifying it.
+// Used only to extract PrevRoot for linkage before overwriting.
+func readStoredHead(dir string) (TreeHead, error) {
+	data, err := os.ReadFile(filepath.Join(dir, treeHeadFilename))
+	if err != nil {
+		return TreeHead{}, err
+	}
+	var h TreeHead
+	return h, json.Unmarshal(data, &h)
 }
 
 // macEqual is a constant-time comparison.

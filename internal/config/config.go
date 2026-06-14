@@ -1,7 +1,7 @@
-// Package config manages witness configuration.
-// NOTE: Secondary and tertiary backup paths are intentionally NOT stored here.
-// Secondary is fixed at a hidden system path.
-// Tertiary is derived at runtime from machine identity — it never appears in any file.
+// Package config manages kiss-core configuration.
+//
+// v3 split: the core config covers only local witness concerns. All peer mesh
+// and enforcement settings live in the enforcer's own config (~/.enforcer/).
 package config
 
 import (
@@ -10,17 +10,13 @@ import (
 	"path/filepath"
 )
 
-// Config is the witness client configuration.
-// SGAILToken may also be provided via the WITNESS_SGAIL_TOKEN environment variable.
+// Config is the kiss-core witness configuration.
+// It intentionally has no network-facing fields — the core is network-silent
+// except for transparency mirror pushes (operator opt-in).
 type Config struct {
 	PrimaryDir       string `json:"primary_dir"`
-	SGAILEnabled     bool   `json:"sgail_enabled"`
-	SGAILEndpoint    string `json:"sgail_endpoint,omitempty"`
-	SGAILToken       string `json:"sgail_token,omitempty"`
-	SyncIntervalSec  int    `json:"sync_interval_sec"`
 	DriftIntervalSec int    `json:"drift_interval_sec"`
-	GossipListenAddr string `json:"gossip_listen_addr,omitempty"` // UDP addr; default ":9273"
-	MirrorURL        string `json:"mirror_url,omitempty"`         // transparency mirror endpoint
+	MirrorURL        string `json:"mirror_url,omitempty"` // transparency mirror endpoint
 }
 
 // DefaultConfig returns a config with sensible defaults.
@@ -28,8 +24,6 @@ func DefaultConfig() *Config {
 	home, _ := os.UserHomeDir()
 	return &Config{
 		PrimaryDir:       filepath.Join(home, ".witness", "primary"),
-		SGAILEnabled:     false,
-		SyncIntervalSec:  300, // 5 minutes
 		DriftIntervalSec: 30,
 	}
 }
@@ -46,10 +40,6 @@ func Load(path string) (*Config, error) {
 	cfg := DefaultConfig()
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, err
-	}
-	// Allow token override via environment
-	if t := os.Getenv("WITNESS_SGAIL_TOKEN"); t != "" {
-		cfg.SGAILToken = t
 	}
 	return cfg, nil
 }

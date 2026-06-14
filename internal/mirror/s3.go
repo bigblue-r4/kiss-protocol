@@ -94,7 +94,34 @@ func (b *s3Backend) objectURL() string {
 	return fmt.Sprintf("%s/%s/%s", b.endpoint, b.bucket, b.key)
 }
 
+// Push writes the tree head to S3 with version metadata and exponential-backoff
+// retry on transient failures. We include an x-amz-meta-witness-size header
+// derived from the JSON payload so that operators can script monotonicity
+// checks server-side (e.g. via S3 Object Lambda or a custom authorizer).
 func (b *s3Backend) Push(data json.RawMessage) error {
+	// Extract size from the payload for version metadata — best-effort.
+	var head struct {
+		Size uint64 `json:"size"`
+	}
+	_ = json.Unmarshal(data, &head)
+
+	var lastErr error
+	backoff := pushRetryBase
+	for attempt := 0; attempt < maxPushRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(backoff)
+			backoff *= 2
+		}
+		if err := b.doPut(data, head.Size); err != nil {
+			lastErr = err
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("s3 push: failed after %d retries: %w", maxPushRetries, lastErr)
+}
+
+func (b *s3Backend) doPut(data json.RawMessage, treeSize uint64) error {
 	body := []byte(data)
 	payHash := hexSHA256(body)
 
@@ -104,6 +131,9 @@ func (b *s3Backend) Push(data json.RawMessage) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-amz-content-sha256", payHash)
+	// Monotonicity hint: operators can use this metadata in lifecycle policies
+	// or Lambda authorizers to reject out-of-order writes.
+	req.Header.Set("x-amz-meta-witness-size", fmt.Sprintf("%d", treeSize))
 	b.sigV4(req, payHash)
 
 	resp, err := b.client.Do(req)

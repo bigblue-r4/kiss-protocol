@@ -1,4 +1,9 @@
-// witness — continuous machine-state witness client built on Pipelock.
+// witness — kiss-core: incorruptible local machine-state observer.
+//
+// The core witness handles only local concerns: soul verification, genesis
+// snapshot, encrypted Merkle logging, drift detection, and transparency mirror
+// push. It never initiates peer-to-peer connections, runs no UDP listeners,
+// and has no remote sync client. Those functions belong to cmd/enforcer.
 //
 // Commands:
 //
@@ -8,13 +13,14 @@
 //	witness verify            Walk the Merkle log and verify integrity.
 //	witness prove <index>     Emit an inclusion proof for the leaf at index.
 //	witness migrate           Import a v1 log into the v2 Merkle log (one-shot).
-//	witness enable-sync       Enable opt-in SGAIL remote sync.
+//	witness soul sign         Sign the soul file with the configured signer.
+//	witness soul verify       Verify soul file signature against allowlist.
+//	witness audit             Compare local Merkle log to transparency mirror.
 //	witness watchdog <args>   Internal watchdog subprocess — do not call directly.
 //	witness version           Print version.
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -32,19 +38,17 @@ import (
 	"github.com/bigblue-r4/kiss-protocol/internal/drift"
 	"github.com/bigblue-r4/kiss-protocol/internal/encrypt"
 	"github.com/bigblue-r4/kiss-protocol/internal/genesis"
-	"github.com/bigblue-r4/kiss-protocol/internal/gossip"
 	"github.com/bigblue-r4/kiss-protocol/internal/machid"
 	"github.com/bigblue-r4/kiss-protocol/internal/migrate"
 	"github.com/bigblue-r4/kiss-protocol/internal/mirror"
 	"github.com/bigblue-r4/kiss-protocol/internal/pipelock"
 	"github.com/bigblue-r4/kiss-protocol/internal/pipelock_bridge"
-	"github.com/bigblue-r4/kiss-protocol/internal/sgail"
 	"github.com/bigblue-r4/kiss-protocol/internal/signer"
 	"github.com/bigblue-r4/kiss-protocol/internal/soul"
 	"github.com/bigblue-r4/kiss-protocol/internal/store"
 )
 
-const version = "2.0.0"
+const version = "3.0.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -68,14 +72,10 @@ func main() {
 		cmdSoul()
 	case "audit":
 		cmdAudit()
-	case "peer":
-		cmdPeer()
-	case "enable-sync":
-		cmdEnableSync()
 	case "watchdog":
 		cmdWatchdog()
 	case "version", "--version", "-v":
-		fmt.Println("SGAIL Labs Harborlight Firewall witness v" + version)
+		fmt.Println("SGAIL Labs Harborlight witness v" + version)
 	default:
 		usage()
 		os.Exit(1)
@@ -83,7 +83,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `SGAIL Labs Harborlight Firewall witness v%s
+	fmt.Fprintf(os.Stderr, `SGAIL Labs Harborlight witness v%s (kiss-core)
 
 Usage:
   witness init                    Take genesis snapshot, initialize Merkle log
@@ -91,25 +91,19 @@ Usage:
   witness status                  Show current witness status
   witness verify                  Walk Merkle log and verify integrity
   witness prove <index>           Emit inclusion proof for leaf at index
-  witness migrate                 Import v1 log into v2 Merkle log (one-shot)
-  witness soul sign               Sign the soul file with the configured signer
+  witness migrate [src-dir]       Import v1 log into v2 Merkle log (one-shot)
+  witness soul sign [--dev]       Sign the soul file with the configured signer
   witness soul verify             Verify soul file signature against allowlist
-  witness audit                   Compare local Merkle log to transparency mirror
-  witness peer list               List configured gossip peers
-  witness peer add <l> <addr> <k> Add a gossip peer (label, UDP addr, hex pubkey)
-  witness peer remove <label>     Remove a gossip peer
-  witness enable-sync             Configure opt-in SGAIL Labs remote sync [deprecated]
+  witness audit [--max-lag N]     Compare local Merkle log to transparency mirror
   witness version                 Print version
 
+Peer mesh and enforcement: run 'enforcer --help'
 `, version)
 }
 
 // ── init ─────────────────────────────────────────────────────────────────────
 
 func cmdInit() {
-	// ── Soul file — load first, before anything else ──────────────────────
-	// The soul is the agent's immutable identity. If it fails verification,
-	// we halt here. Nothing happens until the soul is clean.
 	fmt.Println()
 	fmt.Println("  Loading soul file…")
 	if !soul.Exists() {
@@ -151,9 +145,6 @@ func cmdInit() {
 		fatal("load config: %v", err)
 	}
 
-	// ── Agent preflight scan ─────────────────────────────────────────────
-	// Genesis must be taken BEFORE any AI agent is installed.
-	// If agents are already present, the snapshot is compromised from the start.
 	fmt.Println("[witness] Scanning for pre-existing AI agents…")
 	agents := genesis.ScanForAgents()
 	if len(agents) > 0 {
@@ -187,7 +178,6 @@ func cmdInit() {
 		fmt.Println("[witness] Clean — no AI agents detected. Genesis is trustworthy.")
 	}
 
-	// ── Take genesis snapshot ─────────────────────────────────────────────
 	fmt.Println("[witness] Taking genesis snapshot…")
 	snap, err := genesis.Take(mid)
 	if err != nil {
@@ -196,7 +186,7 @@ func cmdInit() {
 	if !snap.Verify() {
 		fatal("genesis: integrity check failed immediately after creation")
 	}
-	snap.AgentsAtGenesis = agents // record what was present (may be empty)
+	snap.AgentsAtGenesis = agents
 
 	snapBytes, err := snap.Bytes()
 	if err != nil {
@@ -213,13 +203,11 @@ func cmdInit() {
 		fatal("encrypt genesis: %v", err)
 	}
 
-	// ── Store genesis ─────────────────────────────────────────────────────
 	if err := os.MkdirAll(cfg.PrimaryDir, 0700); err != nil {
 		fatal("create primary dir: %v", err)
 	}
 	mustWrite(filepath.Join(cfg.PrimaryDir, "genesis.enc"), snapEnc)
 
-	// ── Open the primary log and write genesis entry (entry zero) ─────────
 	s, err := store.Open(cfg.PrimaryDir, key, nil)
 	if err != nil {
 		fatal("open store: %v", err)
@@ -244,7 +232,6 @@ func cmdInit() {
 	}
 	_ = s.Close()
 
-	// ── Generate Pipelock config ──────────────────────────────────────────
 	plCfg := pipelock.DefaultConfig(cfg.PrimaryDir)
 	if err := plCfg.WriteConfig(); err != nil {
 		warn("could not write pipelock config: %v (Pipelock integration disabled)", err)
@@ -252,7 +239,6 @@ func cmdInit() {
 		fmt.Printf("  Pipelock   : config written → %s\n", plCfg.ConfigFile)
 	}
 
-	// ── Save config ───────────────────────────────────────────────────────
 	if err := cfg.Save(config.Path()); err != nil {
 		fatal("save config: %v", err)
 	}
@@ -298,13 +284,9 @@ func cmdStart() {
 		fatal("derive key: %v", err)
 	}
 
-	// ── Resolve signer ────────────────────────────────────────────────────
 	signerInst := resolveSigner(devMode, witnessDir())
-
-	// ── Soul signature verification ───────────────────────────────────────
 	checkSoulSignature(soul.Path(), devMode)
 
-	// Load and verify genesis.
 	snapEncBytes, err := os.ReadFile(filepath.Join(cfg.PrimaryDir, "genesis.enc"))
 	if err != nil {
 		fatal("read genesis: %v\n\nRun 'witness init' first.", err)
@@ -321,58 +303,12 @@ func cmdStart() {
 		fatal("CRITICAL: genesis integrity check failed — possible tampering detected")
 	}
 
-	// Open primary log with the configured signer.
 	s, err := store.Open(cfg.PrimaryDir, key, signerInst)
 	if err != nil {
 		fatal("open store: %v", err)
 	}
 
-	// Build SGAIL client only if opted in.
-	var sgailClient *sgail.Client
-	if cfg.SGAILEnabled && cfg.SGAILEndpoint != "" {
-		sgailClient = sgail.NewClient(cfg.SGAILEndpoint, cfg.SGAILToken)
-		if err := sgailClient.Ping(); err != nil {
-			warn("SGAIL server unreachable: %v (will retry on next sync cycle)", err)
-		} else {
-			fmt.Printf("[witness] SGAIL sync enabled → %s\n", cfg.SGAILEndpoint)
-		}
-	}
-
-	broadcaster := death.New(cfg.PrimaryDir, mid, sgailClient)
-
-	// ── Gossip heartbeat mesh ─────────────────────────────────────────────
-	gossipCtx, gossipCancel := context.WithCancel(context.Background())
-	var gossipNode *gossip.Node
-	var gossipPeers []gossip.Peer
-	peerStore, peerErr := gossip.LoadPeers(filepath.Join(witnessDir(), "peers.json"))
-	if peerErr != nil {
-		warn("load peers: %v (gossip disabled)", peerErr)
-	} else if len(peerStore.All()) > 0 {
-		gossipPeers = peerStore.All()
-		listenAddr := cfg.GossipListenAddr
-		if listenAddr == "" {
-			listenAddr = ":" + gossip.DefaultPort
-		}
-		gossipNode = gossip.NewNode(gossip.NodeConfig{
-			Signer:     signerInst,
-			Peers:      gossipPeers,
-			ListenAddr: listenAddr,
-			OnSilent: func(p gossip.Peer) {
-				_ = s.Append("WARN", "peer_silent", "gossip", map[string]string{"peer": p.Label, "addr": p.Addr})
-				warn("Gossip: peer %q silent", p.Label)
-			},
-			OnDeath: func(p gossip.Peer) {
-				_ = s.Append("WARN", "peer_presumed_compromised", "gossip", map[string]string{"peer": p.Label, "addr": p.Addr})
-				warn("Gossip: peer %q presumed compromised — possible tampering or crash", p.Label)
-			},
-		})
-		if err := gossipNode.Start(gossipCtx); err != nil {
-			warn("gossip start: %v (gossip disabled)", err)
-			gossipNode = nil
-		} else {
-			fmt.Printf("[witness] Gossip listening on %s (%d peer(s))\n", gossipNode.LocalAddr(), len(gossipPeers))
-		}
-	}
+	broadcaster := death.New(cfg.PrimaryDir, mid)
 
 	// ── Transparency mirror ────────────────────────────────────────────────
 	var mirrorBackend mirror.Mirror
@@ -396,30 +332,25 @@ func cmdStart() {
 			bridge.ProxyAddr(), bridge.ProxyAddr())
 	}
 
-	// ── Anomaly detector (storage + network) ──────────────────────────────
+	// ── Anomaly detector ──────────────────────────────────────────────────
 	anomalyCh := make(chan anomaly.Event, 8)
 	adet := anomaly.New(cfg.PrimaryDir, 10*time.Second, anomalyCh)
 	adet.Run()
 
-	// ── External watchdog subprocess (handles SIGKILL) ────────────────────
-	spawnWatchdog(mid, cfg.PrimaryDir, cfg.SGAILEndpoint, cfg.SGAILToken)
+	spawnWatchdog(mid, cfg.PrimaryDir)
 
-	// ── Signal handlers ───────────────────────────────────────────────────
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 
 	_ = s.Append("INFO", "daemon_start", "witness", map[string]interface{}{
 		"pid":          os.Getpid(),
 		"genesis_hash": snap.Hash,
-		"sgail":        cfg.SGAILEnabled,
 		"pipelock":     plCfg.AuditLogPath(),
 	})
 
 	fmt.Printf("[witness] Daemon started (PID %d)\n", os.Getpid())
 	fmt.Printf("[witness] Genesis: %s\n", snap.Hash)
 
-	// tryPushMirror reads the on-disk tree-head.json and pushes it to the
-	// configured mirror in a fire-and-forget goroutine. Errors are logged.
 	tryPushMirror := func() {
 		if mirrorBackend == nil {
 			return
@@ -434,47 +365,36 @@ func cmdStart() {
 			}
 		}()
 	}
-	// Push immediately after daemon_start so the mirror reflects the current head.
 	tryPushMirror()
 
 	driftTick := time.NewTicker(time.Duration(cfg.DriftIntervalSec) * time.Second)
-	syncTick := time.NewTicker(time.Duration(cfg.SyncIntervalSec) * time.Second)
 	defer driftTick.Stop()
-	defer syncTick.Stop()
 
-	// fireDeath tears everything down and broadcasts, then returns.
-	var deathSeq uint64
 	fireDeath := func(reason, detail string) {
-		fmt.Printf("[witness] Death trigger: %s — broadcasting…\n", reason)
+		fmt.Printf("[witness] Death trigger: %s — writing snapshot…\n", reason)
 		_ = s.Append("DEATH", reason, "witness", map[string]string{"detail": detail})
 		bridge.Stop()
 		adet.Stop()
-		gossipCancel()
-		if gossipNode != nil {
-			deathSeq++
-			gossip.BroadcastDeath(gossipPeers, signerInst, mid, reason, deathSeq)
-			gossipNode.Stop()
-		}
 		_ = s.Close()
 		logData, _ := os.ReadFile(filepath.Join(cfg.PrimaryDir, "witness.log"))
 		broadcaster.Fire(logData, snapEncBytes)
-		fmt.Printf("[witness] Death broadcast complete.\n")
+		fmt.Printf("[witness] Death snapshot written.\n")
 	}
+
+	// Unused context to satisfy consistent goroutine API.
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	for {
 		select {
-
-		// ── Anomaly detection ──────────────────────────────────────────────
 		case a := <-anomalyCh:
 			_ = s.Append("WARN", string(a.Kind), "anomaly", a)
 			warn("Anomaly detected: %s — %s", a.Kind, a.Detail)
-			// Storage anomaly means we can't rely on the log — broadcast immediately.
 			if a.Kind == anomaly.KindStorage {
 				fireDeath(string(a.Kind), a.Detail)
 				return
 			}
 
-		// ── Drift check ────────────────────────────────────────────────────
 		case <-driftTick.C:
 			changes, err := drift.Measure(snap)
 			if err != nil {
@@ -489,116 +409,11 @@ func cmdStart() {
 			}
 			tryPushMirror()
 
-		// ── SGAIL sync ─────────────────────────────────────────────────────
-		case <-syncTick.C:
-			if sgailClient == nil {
-				continue
-			}
-			logData, err := s.Snapshot()
-			if err != nil {
-				continue
-			}
-			if err := sgailClient.Push(mid, snap.Hash, logData); err != nil {
-				_ = s.Append("WARN", "sgail_sync_failed", "sgail", map[string]string{"err": err.Error()})
-				warn("SGAIL sync: %v", err)
-			} else {
-				_ = s.Append("INFO", "sgail_sync_ok", "sgail", nil)
-			}
-
-		// ── Termination signal ─────────────────────────────────────────────
 		case sig := <-sigCh:
 			fireDeath("signal_received", sig.String())
 			return
 		}
 	}
-}
-
-// ── enable-sync ───────────────────────────────────────────────────────────────
-//
-// Usage:
-//   witness enable-sync                                     (interactive)
-//   witness enable-sync --endpoint https://... [--token t]  (non-interactive)
-
-func cmdEnableSync() {
-	fmt.Fprintln(os.Stderr, "[witness] DEPRECATED: SGAIL remote sync is deprecated in favour of the")
-	fmt.Fprintln(os.Stderr, "          gossip peer mesh (witness peer add). It will be removed in the")
-	fmt.Fprintln(os.Stderr, "          next major release. See docs/migrating-from-sgail-sync.md.")
-	fmt.Fprintln(os.Stderr, "")
-
-	// Parse optional flags: --endpoint <url> --token <tok>
-	var flagEndpoint, flagToken string
-	args := os.Args[2:]
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--endpoint":
-			if i+1 < len(args) {
-				flagEndpoint = args[i+1]
-				i++
-			}
-		case "--token":
-			if i+1 < len(args) {
-				flagToken = args[i+1]
-				i++
-			}
-		}
-	}
-
-	cfg, err := config.Load(config.Path())
-	if err != nil {
-		fatal("load config: %v", err)
-	}
-
-	var endpoint, token string
-
-	if flagEndpoint != "" {
-		// Non-interactive mode.
-		endpoint = flagEndpoint
-		token = flagToken
-		if token == "" {
-			token = os.Getenv("WITNESS_SGAIL_TOKEN")
-		}
-	} else {
-		// Interactive mode.
-		reader := bufio.NewReader(os.Stdin)
-		fmt.Print("SGAIL server endpoint (e.g. https://sgail.example.com): ")
-		endpoint, _ = reader.ReadString('\n')
-		endpoint = strings.TrimSpace(endpoint)
-		if endpoint == "" {
-			fatal("endpoint required")
-		}
-		fmt.Print("SGAIL auth token (leave blank if none): ")
-		token, _ = reader.ReadString('\n')
-		token = strings.TrimSpace(token)
-	}
-
-	cfg.SGAILEnabled = true
-	cfg.SGAILEndpoint = endpoint
-	cfg.SGAILToken = token
-
-	// Verify connectivity before saving.
-	client := sgail.NewClient(endpoint, token)
-	if err := client.Ping(); err != nil {
-		warn("Cannot reach SGAIL server: %v", err)
-		if flagEndpoint == "" {
-			// Interactive: ask to proceed.
-			reader := bufio.NewReader(os.Stdin)
-			fmt.Print("Save anyway? [y/N]: ")
-			confirm, _ := reader.ReadString('\n')
-			if strings.ToLower(strings.TrimSpace(confirm)) != "y" {
-				fmt.Println("Aborted.")
-				return
-			}
-		}
-		// Non-interactive: save anyway (caller's responsibility to ensure reachability).
-	} else {
-		fmt.Println("SGAIL server reachable.")
-	}
-
-	if err := cfg.Save(config.Path()); err != nil {
-		fatal("save config: %v", err)
-	}
-	fmt.Printf("[witness] Remote sync enabled → %s\n", endpoint)
-	fmt.Println("Restart the daemon for changes to take effect.")
 }
 
 // ── status ────────────────────────────────────────────────────────────────────
@@ -629,10 +444,8 @@ func cmdStatus() {
 		}
 	}
 
-	// Load genesis to show trust status.
 	snapEncBytes, _ := os.ReadFile(filepath.Join(cfg.PrimaryDir, "genesis.enc"))
 	genesisStatus := "unknown"
-	var agentCount int
 	if len(snapEncBytes) > 0 {
 		if snapBytes, err := encrypt.Open(snapEncBytes, key); err == nil {
 			if snap, err := genesis.Load(snapBytes); err == nil {
@@ -640,17 +453,15 @@ func cmdStatus() {
 					genesisStatus = "CLEAN"
 				} else {
 					genesisStatus = fmt.Sprintf("COMPROMISED (%d agents present at genesis)", len(snap.AgentsAtGenesis))
-					agentCount = len(snap.AgentsAtGenesis)
 				}
 			}
 		}
 	}
-	_ = agentCount
 
-	// Build tree head for display.
 	s, err := store.Open(cfg.PrimaryDir, key, nil)
 	var treeSize uint64
 	var treeRoot string
+	var prevRoot string
 	var integrityStatus string
 	if err != nil {
 		integrityStatus = "FAIL: " + err.Error()
@@ -658,6 +469,7 @@ func cmdStatus() {
 		head := s.Head()
 		treeSize = head.Size
 		treeRoot = head.Root
+		prevRoot = head.PrevRoot
 		integrityStatus = "OK"
 		_ = s.Close()
 	}
@@ -669,13 +481,9 @@ func cmdStatus() {
 	fmt.Printf("Drift events  : %d\n", driftCount)
 	fmt.Printf("Tree size     : %d\n", treeSize)
 	fmt.Printf("Tree root     : %s\n", treeRoot)
+	fmt.Printf("Prev root     : %s\n", prevRoot)
 	fmt.Printf("Integrity     : %s\n", integrityStatus)
 	fmt.Printf("Log dir       : %s\n", cfg.PrimaryDir)
-	if cfg.SGAILEnabled {
-		fmt.Printf("SGAIL sync    : enabled (%s)\n", cfg.SGAILEndpoint)
-	} else {
-		fmt.Printf("SGAIL sync    : disabled (opt-in only)\n")
-	}
 	if len(entries) > 0 {
 		last := entries[len(entries)-1]
 		fmt.Printf("Last event    : [%s] %s / %s (%s)\n",
@@ -686,13 +494,9 @@ func cmdStatus() {
 }
 
 // ── watchdog ─────────────────────────────────────────────────────────────────
-//
-// The watchdog subprocess is spawned by `witness start` to handle SIGKILL,
-// which the main process cannot catch. It polls the parent PID every 2 seconds.
-// If the parent disappears unexpectedly it fires the death broadcast itself.
 
 func cmdWatchdog() {
-	// Args: witness watchdog <parent-pid> <primary-dir> <machine-id> [sgail-endpoint] [sgail-token]
+	// Args: witness watchdog <parent-pid> <primary-dir> <machine-id>
 	if len(os.Args) < 5 {
 		os.Exit(1)
 	}
@@ -703,20 +507,7 @@ func cmdWatchdog() {
 	primaryDir := os.Args[3]
 	mid := os.Args[4]
 
-	var sgailEndpoint, sgailToken string
-	if len(os.Args) >= 6 {
-		sgailEndpoint = os.Args[5]
-	}
-	if len(os.Args) >= 7 {
-		sgailToken = os.Args[6]
-	}
-
-	var sgailClient *sgail.Client
-	if sgailEndpoint != "" {
-		sgailClient = sgail.NewClient(sgailEndpoint, sgailToken)
-	}
-
-	broadcaster := death.New(primaryDir, mid, sgailClient)
+	broadcaster := death.New(primaryDir, mid)
 
 	for {
 		time.Sleep(2 * time.Second)
@@ -732,33 +523,6 @@ func cmdWatchdog() {
 	logData, _ := os.ReadFile(filepath.Join(primaryDir, "witness.log"))
 	genesisData, _ := os.ReadFile(filepath.Join(primaryDir, "genesis.enc"))
 	broadcaster.Fire(logData, genesisData)
-}
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-func spawnWatchdog(mid, primaryDir, sgailEndpoint, sgailToken string) {
-	self, err := os.Executable()
-	if err != nil {
-		warn("could not resolve own path for watchdog: %v", err)
-		return
-	}
-	args := []string{
-		self, "watchdog",
-		strconv.Itoa(os.Getpid()),
-		primaryDir,
-		mid,
-		sgailEndpoint,
-		sgailToken,
-	}
-	proc, err := os.StartProcess(self, args, &os.ProcAttr{
-		Files: []*os.File{nil, nil, nil}, // detach stdio
-		Sys:   &syscall.SysProcAttr{Setsid: true},
-	})
-	if err != nil {
-		warn("could not start watchdog: %v", err)
-		return
-	}
-	_ = proc.Release()
 }
 
 // ── soul ──────────────────────────────────────────────────────────────────────
@@ -817,7 +581,6 @@ func cmdMigrate() {
 		fatal("derive key: %v", err)
 	}
 
-	// Determine v1 log source — default is the same primary dir (in-place migration).
 	srcDir := cfg.PrimaryDir
 	if len(os.Args) >= 3 {
 		srcDir = os.Args[2]
@@ -843,16 +606,13 @@ func cmdMigrate() {
 	fmt.Printf("  Boundary    : v1_import_boundary leaf appended\n")
 }
 
-// ── signer helpers ────────────────────────────────────────────────────────────
+// ── helpers ───────────────────────────────────────────────────────────────────
 
-// witnessDir returns the ~/.witness directory path.
 func witnessDir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".witness")
 }
 
-// resolveSigner returns the active Signer based on mode.
-// Returns nil if no signer is available (MAC-only mode).
 func resolveSigner(devMode bool, keyDir string) signer.Signer {
 	if devMode {
 		s, err := signer.NewDev(keyDir)
@@ -869,9 +629,6 @@ func resolveSigner(devMode bool, keyDir string) signer.Signer {
 	return s
 }
 
-// checkSoulSignature verifies the soul file's detached ed25519 signature.
-// In dev mode, a missing or invalid signature is a warning, not a fatal error.
-// In production mode, a missing or invalid signature halts startup.
 func checkSoulSignature(soulPath string, devMode bool) {
 	allowlist, err := soul.LoadAllowlist(soul.AllowlistPath())
 	if err != nil {
@@ -899,6 +656,29 @@ func checkSoulSignature(soulPath string, devMode bool) {
 		os.Exit(1)
 	}
 	fmt.Println("[witness] Soul signature verified.")
+}
+
+func spawnWatchdog(mid, primaryDir string) {
+	self, err := os.Executable()
+	if err != nil {
+		warn("could not resolve own path for watchdog: %v", err)
+		return
+	}
+	args := []string{
+		self, "watchdog",
+		strconv.Itoa(os.Getpid()),
+		primaryDir,
+		mid,
+	}
+	proc, err := os.StartProcess(self, args, &os.ProcAttr{
+		Files: []*os.File{nil, nil, nil},
+		Sys:   &syscall.SysProcAttr{Setsid: true},
+	})
+	if err != nil {
+		warn("could not start watchdog: %v", err)
+		return
+	}
+	_ = proc.Release()
 }
 
 func padRight(s string, n int) string {
