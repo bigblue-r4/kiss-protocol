@@ -43,6 +43,7 @@ import (
 	"github.com/bigblue-r4/kiss-protocol/internal/mirror"
 	"github.com/bigblue-r4/kiss-protocol/internal/pipelock"
 	"github.com/bigblue-r4/kiss-protocol/internal/pipelock_bridge"
+	"github.com/bigblue-r4/kiss-protocol/internal/sbh"
 	"github.com/bigblue-r4/kiss-protocol/internal/signer"
 	"github.com/bigblue-r4/kiss-protocol/internal/soul"
 	"github.com/bigblue-r4/kiss-protocol/internal/store"
@@ -332,6 +333,14 @@ func cmdStart() {
 			bridge.ProxyAddr(), bridge.ProxyAddr())
 	}
 
+	// ── SBH forge audit bridge ─────────────────────────────────────────────
+	var sbhBridge *sbh.Bridge
+	if cfg.SBHAuditPath != "" {
+		sbhBridge = sbh.New(cfg.SBHAuditPath, s)
+		sbhBridge.Start()
+		fmt.Printf("[witness] SBH forge audit tailing → %s\n", cfg.SBHAuditPath)
+	}
+
 	// ── Anomaly detector ──────────────────────────────────────────────────
 	anomalyCh := make(chan anomaly.Event, 8)
 	adet := anomaly.New(cfg.PrimaryDir, 10*time.Second, anomalyCh)
@@ -346,6 +355,7 @@ func cmdStart() {
 		"pid":          os.Getpid(),
 		"genesis_hash": snap.Hash,
 		"pipelock":     plCfg.AuditLogPath(),
+		"sbh_enabled":  cfg.SBHAuditPath != "",
 	})
 
 	fmt.Printf("[witness] Daemon started (PID %d)\n", os.Getpid())
@@ -373,6 +383,9 @@ func cmdStart() {
 	fireDeath := func(reason, detail string) {
 		fmt.Printf("[witness] Death trigger: %s — writing snapshot…\n", reason)
 		_ = s.Append("DEATH", reason, "witness", map[string]string{"detail": detail})
+		if sbhBridge != nil {
+			sbhBridge.Stop()
+		}
 		bridge.Stop()
 		adet.Stop()
 		_ = s.Close()

@@ -17,6 +17,10 @@ type Config struct {
 	PrimaryDir       string `json:"primary_dir"`
 	DriftIntervalSec int    `json:"drift_interval_sec"`
 	MirrorURL        string `json:"mirror_url,omitempty"` // transparency mirror endpoint
+	// SBHAuditPath is the path to the split-brain-harness forge audit JSONL log.
+	// When set (or overridden by SBH_AUDIT_PATH env var), witness tails the log
+	// and records every forge run in the encrypted Merkle witness store.
+	SBHAuditPath string `json:"sbh_audit_path,omitempty"`
 }
 
 // DefaultConfig returns a config with sensible defaults.
@@ -40,6 +44,10 @@ func Load(path string) (*Config, error) {
 	cfg := DefaultConfig()
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, err
+	}
+	// Allow SBH audit path override via environment
+	if p := os.Getenv("SBH_AUDIT_PATH"); p != "" {
+		cfg.SBHAuditPath = p
 	}
 	return cfg, nil
 }
