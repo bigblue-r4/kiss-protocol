@@ -22,6 +22,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -51,8 +52,8 @@ type Entry struct {
 // TreeHead is the Merkle log head stored at tree-head.json.
 type TreeHead struct {
 	Size      uint64 `json:"size"`
-	Root      string `json:"root"`              // hex-encoded 32-byte BLAKE3 root
-	PrevRoot  string `json:"prev_root"`          // root of the immediately prior head; "" for size==0
+	Root      string `json:"root"`      // hex-encoded 32-byte BLAKE3 root
+	PrevRoot  string `json:"prev_root"` // root of the immediately prior head; "" for size==0
 	Timestamp string `json:"ts"`
 	MAC       string `json:"mac"`                  // BLAKE3-keyed(machineKey, size_be8 || root)
 	Signature string `json:"sig,omitempty"`        // ed25519 sig over (size_be8 || root), Phase 2+
@@ -118,12 +119,16 @@ func (s *Store) Append(level, event, source string, data interface{}) error {
 	defer s.mu.Unlock()
 
 	s.seq++
+	// Sanitize string fields to valid UTF-8 so json.Marshal produces a stable
+	// byte sequence. Without this, invalid bytes (e.g. \xbd) are replaced with
+	// the � JSON escape on the first marshal but output as literal UTF-8
+	// after an unmarshal→remarshal cycle, causing a leaf-hash mismatch.
 	e := Entry{
 		Seq:       s.seq,
 		Timestamp: time.Now().UTC(),
-		Level:     level,
-		Event:     event,
-		Source:    source,
+		Level:     strings.ToValidUTF8(level, "\xef\xbf\xbd"),
+		Event:     strings.ToValidUTF8(event, "\xef\xbf\xbd"),
+		Source:    strings.ToValidUTF8(source, "\xef\xbf\xbd"),
 	}
 	if data != nil {
 		b, err := json.Marshal(data)

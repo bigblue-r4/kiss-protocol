@@ -112,7 +112,7 @@ func FuzzZeroSoulHash(f *testing.F) {
 	f.Add([]byte(`soul_hash = "abc123"`))
 	f.Add([]byte(`soul_hash = ""`))
 	f.Add([]byte{})
-	f.Add([]byte("soul_hash"))           // key with no value
+	f.Add([]byte("soul_hash"))            // key with no value
 	f.Add([]byte(`soul_hash = 'single'`)) // single-quoted (invalid TOML but fuzz it)
 	f.Add([]byte("\x00soul_hash = \"a\""))
 
