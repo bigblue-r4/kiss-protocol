@@ -11,6 +11,11 @@ Tamper-evident machine-state logging for AI agent environments. Witness takes a 
 
 A compromised enforcer cannot falsify the core witness record.
 
+[![CI](https://github.com/bigblue-r4/kiss-protocol/actions/workflows/ci.yml/badge.svg)](https://github.com/bigblue-r4/kiss-protocol/actions/workflows/ci.yml)
+[![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+See [CHANGELOG.md](CHANGELOG.md) for full version history.
+
 ---
 
 ## Quick start

@@ -30,21 +30,21 @@ jobs:
           set -euo pipefail
           mkdir -p dist
 
-          REPRO="-trimpath -ldflags=-s\ -w -buildvcs=false"
-
           for GOOS in linux darwin; do
             for GOARCH in amd64 arm64; do
-              OUT="dist/witness_${GOOS}_${GOARCH}"
-              GOOS=$GOOS GOARCH=$GOARCH GOTOOLCHAIN=local \
-                go build -trimpath -ldflags="-s -w" -buildvcs=false \
-                -o "$OUT" ./cmd/witness
-              sha256sum "$OUT" > "${OUT}.sha256"
+              for BIN in witness enforcer; do
+                OUT="dist/${BIN}_${GOOS}_${GOARCH}"
+                GOOS=$GOOS GOARCH=$GOARCH GOTOOLCHAIN=local \
+                  go build -trimpath -ldflags="-s -w" -buildvcs=false \
+                  -o "$OUT" ./cmd/$BIN
+                sha256sum "$OUT" > "${OUT}.sha256"
+              done
             done
           done
 
       - name: Sign artifacts with cosign (keyless OIDC)
         run: |
-          for f in dist/witness_*; do
+          for f in dist/witness_* dist/enforcer_*; do
             [[ "$f" == *.sha256 ]] && continue
             cosign sign-blob \
               --yes \
@@ -53,12 +53,26 @@ jobs:
               "$f"
           done
 
+      - name: Extract changelog entry
+        id: changelog
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          NOTES=$(awk "/^## \[$VERSION\]/{found=1; next} found && /^## \[/{exit} found && !/^---$/{print}" CHANGELOG.md)
+          echo "notes<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$NOTES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/witness_*
+            dist/enforcer_*
           body: |
+            ${{ steps.changelog.outputs.notes }}
+
+            ---
+
             ## Verification
 
             Verify any artifact with [cosign](https://docs.sigstore.dev/cosign/overview/):
@@ -72,9 +86,8 @@ jobs:
               witness_linux_amd64
             ```
 
-            Replace `linux_amd64` with your platform (`linux_arm64`, `darwin_amd64`, `darwin_arm64`).
+            Replace `witness` with `enforcer` and `linux_amd64` with your platform (`linux_arm64`, `darwin_amd64`, `darwin_arm64`).
 
-            Verify the SHA-256 checksum:
             ```bash
             sha256sum -c witness_linux_amd64.sha256
             ```
