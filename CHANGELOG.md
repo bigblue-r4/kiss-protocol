@@ -4,6 +4,13 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 
 ---
 
+## [3.2.0] — 2026-06-30
+
+### Added
+- `docs/prior-art.md` — curated architectural prior art for Sentinel/Witness/Bigblue: agent-governance-toolkit (policy gate), OpenFang (Merkle chain diff target), AgentSeal (MCP audit adapter), LlamaFirewall (SBIR citation baseline)
+
+---
+
 ## [3.1.0] — 2026-06-28
 
 ### Added
