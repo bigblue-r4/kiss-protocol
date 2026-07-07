@@ -18,8 +18,9 @@ const (
 // HashLeaf returns the RFC 6962 leaf hash of data.
 func HashLeaf(data []byte) [32]byte {
 	h := blake3.New(32, nil)
-	h.Write([]byte{leafPrefix})
-	h.Write(data)
+	// blake3's Write never returns an error; discard explicitly.
+	_, _ = h.Write([]byte{leafPrefix})
+	_, _ = h.Write(data)
 	var out [32]byte
 	copy(out[:], h.Sum(nil))
 	return out
@@ -28,9 +29,10 @@ func HashLeaf(data []byte) [32]byte {
 // HashNode returns the RFC 6962 internal node hash of two child hashes.
 func HashNode(left, right [32]byte) [32]byte {
 	h := blake3.New(32, nil)
-	h.Write([]byte{nodePrefix})
-	h.Write(left[:])
-	h.Write(right[:])
+	// blake3's Write never returns an error; discard explicitly.
+	_, _ = h.Write([]byte{nodePrefix})
+	_, _ = h.Write(left[:])
+	_, _ = h.Write(right[:])
 	var out [32]byte
 	copy(out[:], h.Sum(nil))
 	return out
