@@ -405,7 +405,8 @@ func treeHeadSigInput(size uint64, root [32]byte) []byte {
 // computeMAC returns BLAKE3-keyed(key, size_be8 || root).
 func computeMAC(key []byte, size uint64, root [32]byte) [32]byte {
 	h := blake3.New(32, key)
-	h.Write(treeHeadSigInput(size, root))
+	// blake3's Write never returns an error; discard explicitly.
+	_, _ = h.Write(treeHeadSigInput(size, root))
 	var out [32]byte
 	copy(out[:], h.Sum(nil))
 	return out
