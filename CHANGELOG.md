@@ -6,6 +6,9 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 
 ## [3.2.1] — 2026-07-10
 
+### Added
+- **Flight-recorder receipts folded into the witness log (issue #10 follow-up)**: the Pipelock bridge now tails the `flight_recorder` evidence directory and forwards every signed, hash-chained decision receipt into the witness Merkle log as `pipelock_receipt` events, alongside the raw NDJSON audit stream. New `pipelock.EvidenceTailer` discovers rotating `evidence-*.jsonl` files (following pre-existing files from the end, new files from the start). Receipt signing is opt-in via `PIPELOCK_SIGNING_KEY` / `Config.SigningKeyPath`; without a key the evidence is still hash-chained and ingested, just unsigned.
+
 ### Fixed
 - **Pipelock config schema (issue #10)**: the generated Pipelock config used invented top-level keys (`proxy`, `audit`, `policy`, `response_scan`, `behavioral`, `mcp`) that Pipelock rejects at startup with unknown-field errors, so the process exited immediately and the network audit leg silently no-op'd. Rewrote the template against the Pipelock v3 schema (`mode: audit`, `fetch_proxy`/`forward_proxy`, `logging`, `mcp_input_scanning`/`mcp_tool_scanning`, `behavioral_baseline`, `flight_recorder`) and added a regression test that runs `pipelock check` against the generated config when the binary is present. Thanks to @luckyPipewrench (Pipelock author) for the report and corrected config.
 - **Silent Pipelock startup failure**: `Runner.Start` now health-checks the proxy port before reporting success, and captures the subprocess's stderr into the witness log (as `pipelock_stderr` events) so a config rejection or crash is recorded instead of masked by a false "proxy running" message.

@@ -3,6 +3,7 @@ package pipelock
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -46,6 +47,43 @@ func TestWriteConfigSchema(t *testing.T) {
 	// The tailer follows logging.file; it must be the configured audit log.
 	if !strings.Contains(got, cfg.AuditLog) {
 		t.Errorf("logging.file does not point at the audit log %q\n%s", cfg.AuditLog, got)
+	}
+}
+
+// TestWriteConfigSigningKey verifies the flight_recorder signing key is only
+// emitted when configured, and that it passes pipelock check when present.
+func TestWriteConfigSigningKey(t *testing.T) {
+	dir := t.TempDir()
+
+	// Default (no key): flight_recorder is present but unsigned.
+	cfg := DefaultConfig(dir)
+	cfg.SigningKeyPath = ""
+	if err := cfg.WriteConfig(); err != nil {
+		t.Fatalf("WriteConfig: %v", err)
+	}
+	data, _ := os.ReadFile(cfg.ConfigFile)
+	if strings.Contains(string(data), "signing_key_path") {
+		t.Errorf("signing_key_path should be absent when no key is configured\n%s", data)
+	}
+	if !strings.Contains(string(data), "flight_recorder:") {
+		t.Errorf("flight_recorder block should always be present")
+	}
+
+	// With a key: signing_key_path is emitted and check still passes.
+	keyPath := filepath.Join(dir, "signing.key")
+	cfg.SigningKeyPath = keyPath
+	if err := cfg.WriteConfig(); err != nil {
+		t.Fatalf("WriteConfig with key: %v", err)
+	}
+	data, _ = os.ReadFile(cfg.ConfigFile)
+	if !strings.Contains(string(data), "signing_key_path: \""+keyPath+"\"") {
+		t.Errorf("signing_key_path not emitted\n%s", data)
+	}
+	if bin, err := exec.LookPath("pipelock"); err == nil {
+		out, err := exec.Command(bin, "check", "--config", cfg.ConfigFile).CombinedOutput()
+		if err != nil {
+			t.Fatalf("pipelock check rejected signed config: %v\n%s", err, out)
+		}
 	}
 }
 
