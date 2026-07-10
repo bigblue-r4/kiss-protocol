@@ -2,7 +2,7 @@
 //
 // Witness starts Pipelock in the background using an audit-mode config,
 // then tails Pipelock's NDJSON audit log and forwards every event into
-// the witness encrypted log.  Pipelock runs as a transparent proxy; the
+// the witness encrypted log.  Pipelock runs as a forward proxy; the
 // agent is configured to route traffic through it via HTTPS_PROXY /
 // HTTP_PROXY environment variables.
 package pipelock
@@ -10,60 +10,96 @@ package pipelock
 import (
 	"bytes"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"text/template"
+	"time"
 )
 
+// configTemplate is a Pipelock v3 audit-mode config.
+//
+// The schema is verified against github.com/luckyPipewrench/pipelock v3
+// (see docs/configuration.md upstream). Earlier versions of this file used
+// invented top-level keys (proxy/audit/policy/response_scan/behavioral/mcp)
+// that Pipelock rejects at startup with unknown-field errors, which silently
+// disabled the network audit leg — see issue #10, reported by the Pipelock
+// author. Keep every key below in sync with the upstream config reference.
 const configTemplate = `# SGAIL Labs Harborlight Firewall — generated Pipelock config (audit mode)
 # Do not edit manually; regenerated on every 'witness init'.
+# Schema: Pipelock v3 (github.com/luckyPipewrench/pipelock).
+version: 1
+mode: audit          # detect and log, never block — witness handles alerting
+enforce: false       # belt-and-suspenders with mode: audit
 
-proxy:
+fetch_proxy:
   listen: "127.0.0.1:{{.ProxyPort}}"
-  mode: forward
 
-audit:
+forward_proxy:
   enabled: true
-  format: json
-  output: "{{.AuditLog}}"
-  max_size_mb: 256
-  max_backups: 4
+  max_tunnel_seconds: 300
+  idle_timeout_seconds: 120
 
-policy:
-  default: allow    # audit-only — witness handles alerting, not Pipelock
+logging:
+  format: json
+  output: file
+  file: "{{.AuditLog}}"
+  include_allowed: true
+  include_blocked: true
 
 dlp:
+  scan_env: true
+
+response_scanning:
+  enabled: true
+  action: warn
+
+mcp_input_scanning:
+  enabled: true
+  action: warn
+  on_parse_error: forward
+
+mcp_tool_scanning:
+  enabled: true
+  action: warn
+
+session_profiling:
   enabled: true
 
-response_scan:
+behavioral_baseline:
   enabled: true
+  profile_dir: "{{.ProfileDir}}"
+  deviation_action: warn
 
-behavioral:
-  enabled: true
-
-mcp:
-  enabled: true
-  scan_requests: true
-  scan_responses: true
+# Hash-chained, tamper-evident evidence log. A natural companion to the
+# witness Merkle log; folding these signed receipts into the witness log is
+# tracked as follow-up work.
+flight_recorder:
+  dir: "{{.EvidenceDir}}"
 `
 
 // Config holds runtime paths for a Pipelock instance.
 type Config struct {
-	ConfigFile string
-	AuditLog   string
-	ProxyPort  int
-	BinPath    string
+	ConfigFile  string
+	AuditLog    string
+	ProxyPort   int
+	BinPath     string
+	ProfileDir  string
+	EvidenceDir string
 }
 
 // DefaultConfig returns sensible defaults relative to primaryDir.
 func DefaultConfig(primaryDir string) *Config {
 	return &Config{
-		ConfigFile: filepath.Join(primaryDir, "pipelock.yaml"),
-		AuditLog:   filepath.Join(primaryDir, "pipelock-audit.log"),
-		ProxyPort:  8889,
-		BinPath:    "pipelock",
+		ConfigFile:  filepath.Join(primaryDir, "pipelock.yaml"),
+		AuditLog:    filepath.Join(primaryDir, "pipelock-audit.log"),
+		ProxyPort:   8889,
+		BinPath:     "pipelock",
+		ProfileDir:  filepath.Join(primaryDir, "pipelock-profiles"),
+		EvidenceDir: filepath.Join(primaryDir, "pipelock-evidence"),
 	}
 }
 
@@ -72,14 +108,25 @@ func (c *Config) WriteConfig() error {
 	if err := os.MkdirAll(filepath.Dir(c.ConfigFile), 0700); err != nil {
 		return err
 	}
+	// Pipelock requires profile_dir / flight_recorder.dir to exist; create
+	// them up front so the subprocess does not fail closed at startup.
+	for _, dir := range []string{c.ProfileDir, c.EvidenceDir} {
+		if dir != "" {
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				return err
+			}
+		}
+	}
 	tmpl, err := template.New("cfg").Parse(configTemplate)
 	if err != nil {
 		return err
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, map[string]interface{}{
-		"ProxyPort": c.ProxyPort,
-		"AuditLog":  c.AuditLog,
+		"ProxyPort":   c.ProxyPort,
+		"AuditLog":    c.AuditLog,
+		"ProfileDir":  c.ProfileDir,
+		"EvidenceDir": c.EvidenceDir,
 	}); err != nil {
 		return err
 	}
@@ -88,18 +135,26 @@ func (c *Config) WriteConfig() error {
 
 // Runner manages a Pipelock subprocess.
 type Runner struct {
-	cfg  *Config
-	cmd  *exec.Cmd
-	done chan struct{}
+	cfg    *Config
+	cmd    *exec.Cmd
+	done   chan struct{}
+	stderr *lineSink
 }
 
 // NewRunner creates a Runner for the given config.
 func NewRunner(cfg *Config) *Runner {
-	return &Runner{cfg: cfg, done: make(chan struct{})}
+	return &Runner{cfg: cfg, done: make(chan struct{}), stderr: &lineSink{}}
 }
 
-// Start launches Pipelock as a background subprocess.
-// Returns an error if the binary is not found or fails to start.
+// SetStderrSink registers a callback invoked once per line Pipelock writes to
+// stderr. The bridge uses it to forward Pipelock's own diagnostics into the
+// witness log, so a config failure is visible instead of silent.
+func (r *Runner) SetStderrSink(fn func(line string)) { r.stderr.setSink(fn) }
+
+// Start launches Pipelock as a background subprocess and waits until its proxy
+// port is accepting connections. Returns an error if the binary is not found,
+// the process fails to start, or the proxy does not come up (e.g. a rejected
+// config) — in which case the subprocess is torn down before returning.
 func (r *Runner) Start() error {
 	bin, err := resolveBin(r.cfg.BinPath)
 	if err != nil {
@@ -114,7 +169,7 @@ func (r *Runner) Start() error {
 
 	r.cmd = exec.Command(bin, "run", "--config", r.cfg.ConfigFile)
 	r.cmd.Stdout = nil
-	r.cmd.Stderr = nil
+	r.cmd.Stderr = r.stderr
 
 	if err := r.cmd.Start(); err != nil {
 		return fmt.Errorf("start pipelock: %w", err)
@@ -124,7 +179,37 @@ func (r *Runner) Start() error {
 		_ = r.cmd.Wait()
 		close(r.done)
 	}()
+
+	// A bad config makes Pipelock exit at startup, or the proxy port never
+	// opens. Either way we must not report success while nothing is listening.
+	if err := r.waitReady(3 * time.Second); err != nil {
+		r.Stop()
+		return err
+	}
 	return nil
+}
+
+// waitReady blocks until the proxy port accepts a connection, the subprocess
+// exits, or timeout elapses. Returns nil only when the port is live.
+func (r *Runner) waitReady(timeout time.Duration) error {
+	addr := fmt.Sprintf("127.0.0.1:%d", r.cfg.ProxyPort)
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		select {
+		case <-r.done:
+			return fmt.Errorf("pipelock exited during startup (check config %s): %s",
+				r.cfg.ConfigFile, r.stderr.tail())
+		default:
+		}
+		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("pipelock proxy did not come up on %s within %s: %s",
+		addr, timeout, r.stderr.tail())
 }
 
 // Stop sends SIGTERM to Pipelock and waits for it to exit.
@@ -170,4 +255,66 @@ func resolveBin(name string) (string, error) {
 	}
 	// Fall back to PATH.
 	return exec.LookPath(strings.TrimPrefix(name, "./"))
+}
+
+const maxStderrLines = 20
+
+// lineSink is an io.Writer that splits incoming bytes into lines, retains the
+// last maxStderrLines for error reporting, and forwards each line to an
+// optional sink. It is safe for concurrent use: the subprocess writes to it
+// while Start reads its tail.
+type lineSink struct {
+	mu    sync.Mutex
+	pend  []byte
+	lines []string
+	sink  func(string)
+}
+
+func (l *lineSink) setSink(fn func(string)) {
+	l.mu.Lock()
+	l.sink = fn
+	l.mu.Unlock()
+}
+
+func (l *lineSink) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	l.pend = append(l.pend, p...)
+	var emit []string
+	for {
+		i := bytes.IndexByte(l.pend, '\n')
+		if i < 0 {
+			break
+		}
+		line := strings.TrimRight(string(l.pend[:i]), "\r")
+		l.pend = l.pend[i+1:]
+		if line == "" {
+			continue
+		}
+		l.lines = append(l.lines, line)
+		if len(l.lines) > maxStderrLines {
+			l.lines = l.lines[len(l.lines)-maxStderrLines:]
+		}
+		emit = append(emit, line)
+	}
+	sink := l.sink
+	l.mu.Unlock()
+
+	// Invoke the sink outside the lock so a slow consumer cannot stall the
+	// subprocess's stderr pipe.
+	if sink != nil {
+		for _, line := range emit {
+			sink(line)
+		}
+	}
+	return len(p), nil
+}
+
+// tail returns the retained stderr lines joined for inclusion in an error.
+func (l *lineSink) tail() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.lines) == 0 {
+		return "(no stderr output)"
+	}
+	return strings.Join(l.lines, " | ")
 }

@@ -31,8 +31,15 @@ type Bridge struct {
 // Call Start to begin forwarding events.
 func New(cfg *pipelock.Config, s *store.Store) *Bridge {
 	ch := make(chan pipelock.AuditEvent, 256)
+	runner := pipelock.NewRunner(cfg)
+	// Forward pipelock's own stderr (startup errors, config rejections, panics)
+	// into the witness log so a misconfiguration is recorded, not silent.
+	runner.SetStderrSink(func(line string) {
+		_ = s.Append("WARN", "pipelock_stderr", "pipelock",
+			map[string]interface{}{"message": line})
+	})
 	return &Bridge{
-		runner:      pipelock.NewRunner(cfg),
+		runner:      runner,
 		tailer:      pipelock.NewTailer(cfg.AuditLogPath(), ch),
 		events:      ch,
 		store:       s,
