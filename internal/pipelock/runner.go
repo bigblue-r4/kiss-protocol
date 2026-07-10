@@ -74,11 +74,17 @@ behavioral_baseline:
   profile_dir: "{{.ProfileDir}}"
   deviation_action: warn
 
-# Hash-chained, tamper-evident evidence log. A natural companion to the
-# witness Merkle log; folding these signed receipts into the witness log is
-# tracked as follow-up work.
+# Hash-chained, tamper-evident evidence log. The witness bridge tails this
+# directory and folds every entry into the witness Merkle log alongside the
+# raw audit events. When a signing key is provisioned, entries are signed
+# decision receipts; without one they are unsigned but still hash-chained.
 flight_recorder:
+  enabled: true
   dir: "{{.EvidenceDir}}"
+{{- if .SigningKeyPath}}
+  signing_key_path: "{{.SigningKeyPath}}"
+  sign_checkpoints: true
+{{- end}}
 `
 
 // Config holds runtime paths for a Pipelock instance.
@@ -89,6 +95,11 @@ type Config struct {
 	BinPath     string
 	ProfileDir  string
 	EvidenceDir string
+	// SigningKeyPath, when set, is the Ed25519 key Pipelock uses to sign
+	// flight_recorder decision receipts. Optional: without it the evidence log
+	// is still written and hash-chained, just unsigned. Provision a key with
+	// `pipelock keygen` / `pipelock init` and point this at the private key.
+	SigningKeyPath string
 }
 
 // DefaultConfig returns sensible defaults relative to primaryDir.
@@ -100,6 +111,9 @@ func DefaultConfig(primaryDir string) *Config {
 		BinPath:     "pipelock",
 		ProfileDir:  filepath.Join(primaryDir, "pipelock-profiles"),
 		EvidenceDir: filepath.Join(primaryDir, "pipelock-evidence"),
+		// Opt-in receipt signing; operators set PIPELOCK_SIGNING_KEY after
+		// provisioning a key. Empty is valid (unsigned hash-chained evidence).
+		SigningKeyPath: os.Getenv("PIPELOCK_SIGNING_KEY"),
 	}
 }
 
@@ -123,10 +137,11 @@ func (c *Config) WriteConfig() error {
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, map[string]interface{}{
-		"ProxyPort":   c.ProxyPort,
-		"AuditLog":    c.AuditLog,
-		"ProfileDir":  c.ProfileDir,
-		"EvidenceDir": c.EvidenceDir,
+		"ProxyPort":      c.ProxyPort,
+		"AuditLog":       c.AuditLog,
+		"ProfileDir":     c.ProfileDir,
+		"EvidenceDir":    c.EvidenceDir,
+		"SigningKeyPath": c.SigningKeyPath,
 	}); err != nil {
 		return err
 	}

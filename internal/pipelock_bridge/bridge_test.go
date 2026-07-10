@@ -66,6 +66,41 @@ func TestBridgeForwardEvents(t *testing.T) {
 	}
 }
 
+func TestBridgeForwardReceipts(t *testing.T) {
+	s := openTestStore(t)
+	dir := t.TempDir()
+	cfg := pipelock.DefaultConfig(dir)
+	b := New(cfg, s)
+
+	// Start just the forwarding goroutine without the subprocess.
+	b.enabled = true
+	go b.forward()
+
+	// Inject flight_recorder receipts directly through the evidence channel.
+	b.evEvents <- pipelock.AuditEvent{"type": "action_receipt", "decision": "allow", "level": "info"}
+	b.evEvents <- pipelock.AuditEvent{"type": "action_receipt", "decision": "block", "level": "warn"}
+
+	time.Sleep(50 * time.Millisecond)
+	close(b.stopForward)
+	<-b.done
+
+	if head := s.Head(); head.Size < 2 {
+		t.Errorf("expected at least 2 receipt leaves in store, got %d", head.Size)
+	}
+}
+
+func TestClassifyReceipt(t *testing.T) {
+	level, event := classifyReceipt(pipelock.AuditEvent{"type": "action_receipt", "level": "warn"})
+	if level != "WARN" || event != "pipelock_receipt:action_receipt" {
+		t.Errorf("got (%s, %s), want (WARN, pipelock_receipt:action_receipt)", level, event)
+	}
+	// No recognizable label field falls back to the generic event name.
+	_, event = classifyReceipt(pipelock.AuditEvent{"seq": 1})
+	if event != "pipelock_receipt" {
+		t.Errorf("got %s, want pipelock_receipt", event)
+	}
+}
+
 func TestBridgeLevelNormalization(t *testing.T) {
 	s := openTestStore(t)
 	dir := t.TempDir()
