@@ -13,6 +13,11 @@ jobs:
   release:
     name: build and sign release artifacts
     runs-on: ubuntu-latest
+    # cosign-installer stays on v3 (cosign v2 sign-blob) and action-gh-release on
+    # v2 — their next majors are breaking (cosign v3 switched sign-blob to a
+    # bundle format). Both are Node20 actions, so keep the force-node24 shim.
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v5
 
@@ -21,7 +26,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v4.1.2
+        uses: sigstore/cosign-installer@v3
 
       - name: Build cross-platform artifacts
         run: |
@@ -61,7 +66,7 @@ jobs:
           echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/witness_*

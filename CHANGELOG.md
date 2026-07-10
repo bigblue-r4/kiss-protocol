@@ -7,7 +7,7 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 ## [3.2.2] — 2026-07-10
 
 ### Changed
-- CI and release workflows modernized to Node 24-native actions (`actions/checkout` v5, `actions/setup-go` v6, `sigstore/cosign-installer` v4.1.2, `softprops/action-gh-release` v3) and dropped the `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` workaround, clearing the Node 20 deprecation warning. No functional change to the `witness` / `enforcer` binaries; this is the first release built through the updated `release.yml`.
+- CI workflow (`ci.yml`) modernized to Node 24-native action majors (`actions/checkout` v5, `actions/setup-go` v6), dropping the `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` workaround and clearing the Node 20 deprecation warning. The release workflow also bumps checkout/setup-go to v5/v6 but intentionally keeps `sigstore/cosign-installer` v3 and `softprops/action-gh-release` v2 — their next majors are breaking (cosign v3 changed `sign-blob` to a bundle format), so they retain the force-node24 shim. No functional change to the `witness` / `enforcer` binaries.
 
 ---
 
