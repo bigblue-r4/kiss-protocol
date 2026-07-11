@@ -22,10 +22,11 @@ import (
 // matches the single-file audit Tailer and avoids duplicate Merkle leaves.
 // Files that appear afterwards are read from the beginning.
 type EvidenceTailer struct {
-	dir       string
-	events    chan AuditEvent
-	stop      chan struct{}
-	pollEvery time.Duration
+	dir          string
+	events       chan AuditEvent
+	stop         chan struct{}
+	pollEvery    time.Duration
+	drainTimeout time.Duration
 
 	mu       sync.Mutex
 	followed map[string]struct{}
@@ -40,7 +41,10 @@ func NewEvidenceTailer(dir string, events chan AuditEvent) *EvidenceTailer {
 		events:    events,
 		stop:      make(chan struct{}),
 		pollEvery: time.Second,
-		followed:  make(map[string]struct{}),
+		// On Stop each follower reads to EOF so pipelock's final receipt (e.g.
+		// the shutdown checkpoint) is captured. The deadline bounds that drain.
+		drainTimeout: 2 * time.Second,
+		followed:     make(map[string]struct{}),
 	}
 }
 
@@ -48,34 +52,44 @@ func NewEvidenceTailer(dir string, events chan AuditEvent) *EvidenceTailer {
 func (e *EvidenceTailer) Run() {
 	firstScan := true
 	for {
-		matches, _ := filepath.Glob(filepath.Join(e.dir, "evidence-*.jsonl"))
-		for _, path := range matches {
-			e.mu.Lock()
-			_, seen := e.followed[path]
-			if !seen {
-				e.followed[path] = struct{}{}
-			}
-			e.mu.Unlock()
-			if seen {
-				continue
-			}
-			// Files present at boot are followed from the end (skip history);
-			// files that appear later are read in full from the start.
-			fromStart := !firstScan
-			e.wg.Add(1)
-			go func(p string, fs bool) {
-				defer e.wg.Done()
-				e.follow(p, fs)
-			}(path, fromStart)
-		}
+		// Files present at boot are followed from the end (skip history); files
+		// that appear later are read in full from the start.
+		e.scan(!firstScan)
 		firstScan = false
 
 		select {
 		case <-e.stop:
+			// Final scan: pick up any evidence file pipelock created just before
+			// exiting that the poll loop hadn't discovered yet, and read it from
+			// the start so its shutdown records are drained too.
+			e.scan(true)
 			e.wg.Wait()
 			return
 		case <-time.After(e.pollEvery):
 		}
+	}
+}
+
+// scan discovers not-yet-followed evidence files and launches a follower for
+// each. fromStart controls whether a newly discovered file is read in full or
+// only tailed from its current end.
+func (e *EvidenceTailer) scan(fromStart bool) {
+	matches, _ := filepath.Glob(filepath.Join(e.dir, "evidence-*.jsonl"))
+	for _, path := range matches {
+		e.mu.Lock()
+		_, seen := e.followed[path]
+		if !seen {
+			e.followed[path] = struct{}{}
+		}
+		e.mu.Unlock()
+		if seen {
+			continue
+		}
+		e.wg.Add(1)
+		go func(p string, fs bool) {
+			defer e.wg.Done()
+			e.follow(p, fs)
+		}(path, fromStart)
 	}
 }
 
@@ -93,11 +107,18 @@ func (e *EvidenceTailer) follow(path string, fromStart bool) {
 	reader := bufio.NewReaderSize(f, 64<<10)
 	var pending []byte
 
+	stopped := false
+	var drainDeadline time.Time
 	for {
-		select {
-		case <-e.stop:
-			return
-		default:
+		// Once Stop is signalled, keep reading what is already on disk until EOF
+		// so the final receipts are drained rather than dropped mid-file.
+		if !stopped {
+			select {
+			case <-e.stop:
+				stopped = true
+				drainDeadline = time.Now().Add(e.drainTimeout)
+			default:
+			}
 		}
 
 		chunk, err := reader.ReadBytes('\n')
@@ -108,10 +129,21 @@ func (e *EvidenceTailer) follow(path string, fromStart bool) {
 			if line != "" {
 				var evt AuditEvent
 				if json.Unmarshal([]byte(line), &evt) == nil {
-					select {
-					case e.events <- evt:
-					case <-e.stop:
-						return
+					if stopped {
+						// Draining: deliver to the still-alive consumer, bounded
+						// by the drain deadline so a dead consumer can't hang us.
+						select {
+						case e.events <- evt:
+						case <-time.After(time.Until(drainDeadline)):
+							return
+						}
+					} else {
+						select {
+						case e.events <- evt:
+						case <-e.stop:
+							stopped = true
+							drainDeadline = time.Now().Add(e.drainTimeout)
+						}
 					}
 				}
 			}
@@ -119,14 +151,17 @@ func (e *EvidenceTailer) follow(path string, fromStart bool) {
 
 		if err != nil {
 			if err == io.EOF {
-				select {
-				case <-e.stop:
-					return
-				case <-time.After(200 * time.Millisecond):
+				if stopped {
+					return // drained to EOF after stop
 				}
+				time.Sleep(200 * time.Millisecond)
 				continue
 			}
 			return
+		}
+
+		if stopped && time.Now().After(drainDeadline) {
+			return // safety bound — don't drain forever if writes keep coming
 		}
 	}
 }

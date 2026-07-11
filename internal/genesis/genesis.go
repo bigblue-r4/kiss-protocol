@@ -70,7 +70,14 @@ var WatchDirs = []string{
 }
 
 // Take captures the current machine state as a verified Snapshot.
-func Take(machineID string) (*Snapshot, error) {
+//
+// agents records any AI agents detected before witness was installed; it is
+// folded into the snapshot BEFORE the integrity hash is computed. AgentsAtGenesis
+// is part of the hashed payload, so assigning it after Take would leave the
+// stored hash covering an empty agent list — a later Verify (e.g. on
+// `witness start`) would then recompute a different hash and reject the genesis
+// as tampered. Pass agents here so the hash and the recorded agents agree.
+func Take(machineID string, agents []AgentPresence) (*Snapshot, error) {
 	hostname, _ := os.Hostname()
 	s := &Snapshot{
 		Version:   1,
@@ -82,10 +89,11 @@ func Take(machineID string) (*Snapshot, error) {
 			Kernel:   kernelVersion(),
 			Hostname: hostname,
 		},
-		Files: hashPaths(WatchFiles, WatchDirs),
-		Procs: procList(),
-		Nets:  netInterfaces(),
-		Users: userList(),
+		Files:           hashPaths(WatchFiles, WatchDirs),
+		Procs:           procList(),
+		Nets:            netInterfaces(),
+		Users:           userList(),
+		AgentsAtGenesis: agents,
 	}
 	s.Hash = s.computeHash()
 	return s, nil

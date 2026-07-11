@@ -180,14 +180,16 @@ func cmdInit() {
 	}
 
 	fmt.Println("[witness] Taking genesis snapshot…")
-	snap, err := genesis.Take(mid)
+	// Fold the detected agents into the snapshot before it is hashed so the
+	// genesis hash covers them — otherwise `witness start` later recomputes a
+	// different hash and rejects a valid genesis as tampered.
+	snap, err := genesis.Take(mid, agents)
 	if err != nil {
 		fatal("genesis: %v", err)
 	}
 	if !snap.Verify() {
 		fatal("genesis: integrity check failed immediately after creation")
 	}
-	snap.AgentsAtGenesis = agents
 
 	snapBytes, err := snap.Bytes()
 	if err != nil {

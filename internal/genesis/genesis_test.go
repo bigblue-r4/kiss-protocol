@@ -6,7 +6,7 @@ import (
 )
 
 func TestSnapshotVerify(t *testing.T) {
-	snap, err := Take("test-machine-id")
+	snap, err := Take("test-machine-id", nil)
 	if err != nil {
 		t.Fatalf("Take: %v", err)
 	}
@@ -16,7 +16,7 @@ func TestSnapshotVerify(t *testing.T) {
 }
 
 func TestSnapshotTamperDetection(t *testing.T) {
-	snap, _ := Take("test-machine-id")
+	snap, _ := Take("test-machine-id", nil)
 	snap.MachineID = "tampered"
 	if snap.Verify() {
 		t.Fatal("Verify: tampered snapshot passed integrity check")
@@ -24,7 +24,7 @@ func TestSnapshotTamperDetection(t *testing.T) {
 }
 
 func TestSnapshotRoundtrip(t *testing.T) {
-	snap, _ := Take("test-machine-id")
+	snap, _ := Take("test-machine-id", nil)
 	data, err := snap.Bytes()
 	if err != nil {
 		t.Fatalf("Bytes: %v", err)
@@ -42,7 +42,7 @@ func TestSnapshotRoundtrip(t *testing.T) {
 }
 
 func TestSnapshotClean(t *testing.T) {
-	snap, _ := Take("test-machine-id")
+	snap, _ := Take("test-machine-id", nil)
 	snap.AgentsAtGenesis = nil
 	if !snap.Clean() {
 		t.Fatal("Clean: empty AgentsAtGenesis should be clean")
@@ -53,9 +53,44 @@ func TestSnapshotClean(t *testing.T) {
 	}
 }
 
+// TestTakeWithAgentsVerifiesAfterRoundTrip guards the genesis-tampering bug:
+// when agents are present at init, the hash must cover them so a snapshot taken
+// with agents still verifies after being serialized and reloaded (as it is on
+// `witness start`). Before the fix, AgentsAtGenesis was assigned after the hash
+// was computed, so the reloaded snapshot recomputed a different hash and was
+// wrongly rejected as tampered.
+func TestTakeWithAgentsVerifiesAfterRoundTrip(t *testing.T) {
+	agents := []AgentPresence{{Name: "claude-code", Found: "/usr/local/bin/claude"}}
+	snap, err := Take("test-machine-id", agents)
+	if err != nil {
+		t.Fatalf("Take: %v", err)
+	}
+	if snap.Clean() {
+		t.Fatal("snapshot with agents present should not be clean")
+	}
+	if !snap.Verify() {
+		t.Fatal("snapshot with agents failed to verify immediately after Take")
+	}
+
+	data, err := snap.Bytes()
+	if err != nil {
+		t.Fatalf("Bytes: %v", err)
+	}
+	loaded, err := Load(data)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !loaded.Verify() {
+		t.Fatal("reloaded snapshot with agents failed to verify — genesis would be flagged tampered")
+	}
+	if len(loaded.AgentsAtGenesis) != 1 || loaded.AgentsAtGenesis[0].Name != "claude-code" {
+		t.Fatalf("AgentsAtGenesis not preserved across round-trip: %+v", loaded.AgentsAtGenesis)
+	}
+}
+
 func TestSnapshotHashChangesWithContent(t *testing.T) {
-	s1, _ := Take("machine-a")
-	s2, _ := Take("machine-b")
+	s1, _ := Take("machine-a", nil)
+	s2, _ := Take("machine-b", nil)
 	if s1.Hash == s2.Hash {
 		t.Fatal("different machine IDs produced the same snapshot hash")
 	}
@@ -69,7 +104,7 @@ func TestLoadInvalid(t *testing.T) {
 }
 
 func TestSnapshotJSONHasVersion(t *testing.T) {
-	snap, _ := Take("test-machine-id")
+	snap, _ := Take("test-machine-id", nil)
 	data, _ := snap.Bytes()
 	var m map[string]interface{}
 	if err := json.Unmarshal(data, &m); err != nil {

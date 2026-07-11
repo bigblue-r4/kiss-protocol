@@ -101,6 +101,68 @@ func TestClassifyReceipt(t *testing.T) {
 	}
 }
 
+// TestClassifyReceiptEnvelope covers the real Pipelock v3 flight_recorder
+// envelope from the issue #10 live test: event_kind must win over the generic
+// top-level type (so read/write isn't lost), lifecycle receipts label off
+// session_control.kind, legacy rows fall back to action_type, and a blocking
+// verdict elevates an INFO row to WARN.
+func TestClassifyReceiptEnvelope(t *testing.T) {
+	tests := []struct {
+		name      string
+		evt       pipelock.AuditEvent
+		wantLevel string
+		wantEvent string
+	}{
+		{
+			name: "action receipt keeps event_kind not type",
+			evt: pipelock.AuditEvent{
+				"type": "action_receipt", "event_kind": "write", "level": "info",
+			},
+			wantLevel: "INFO", wantEvent: "pipelock_receipt:write",
+		},
+		{
+			name: "lifecycle heartbeat via session_control.kind",
+			evt: pipelock.AuditEvent{
+				"type": "action_receipt", "event_kind": "session_control", "level": "info",
+				"detail": map[string]interface{}{
+					"action_record": map[string]interface{}{
+						"session_control": map[string]interface{}{"kind": "heartbeat"},
+					},
+				},
+			},
+			wantLevel: "INFO", wantEvent: "pipelock_receipt:heartbeat",
+		},
+		{
+			name: "legacy row falls back to action_type",
+			evt: pipelock.AuditEvent{
+				"level": "info",
+				"detail": map[string]interface{}{
+					"action_record": map[string]interface{}{"action_type": "http_request"},
+				},
+			},
+			wantLevel: "INFO", wantEvent: "pipelock_receipt:http_request",
+		},
+		{
+			name: "blocking verdict elevates INFO to WARN",
+			evt: pipelock.AuditEvent{
+				"type": "action_receipt", "event_kind": "write", "level": "info",
+				"detail": map[string]interface{}{
+					"action_record": map[string]interface{}{"verdict": "block"},
+				},
+			},
+			wantLevel: "WARN", wantEvent: "pipelock_receipt:write",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			level, event := classifyReceipt(tc.evt)
+			if level != tc.wantLevel || event != tc.wantEvent {
+				t.Errorf("got (%s, %s), want (%s, %s)", level, event, tc.wantLevel, tc.wantEvent)
+			}
+		})
+	}
+}
+
 func TestBridgeLevelNormalization(t *testing.T) {
 	s := openTestStore(t)
 	dir := t.TempDir()

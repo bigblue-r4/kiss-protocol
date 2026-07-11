@@ -31,9 +31,11 @@ func (e AuditEvent) EventName() string {
 // Tailer tails a Pipelock NDJSON audit log and sends parsed events to a channel.
 // It polls the file with a short sleep — no inotify dependency, works everywhere.
 type Tailer struct {
-	path   string
-	events chan AuditEvent
-	stop   chan struct{}
+	path         string
+	events       chan AuditEvent
+	stop         chan struct{}
+	done         chan struct{}
+	drainTimeout time.Duration
 }
 
 // NewTailer creates a Tailer for the given log file path.
@@ -43,12 +45,20 @@ func NewTailer(path string, events chan AuditEvent) *Tailer {
 		path:   path,
 		events: events,
 		stop:   make(chan struct{}),
+		done:   make(chan struct{}),
+		// On Stop the tailer keeps reading until it reaches EOF so the final
+		// records (e.g. pipelock's shutdown transcript_root) are not lost. The
+		// deadline bounds that drain in case writes are somehow still ongoing.
+		drainTimeout: 2 * time.Second,
 	}
 }
 
-// Run starts tailing the file. Blocks until Stop is called.
+// Run starts tailing the file. Blocks until Stop is called, then drains the
+// remaining lines to EOF before returning so shutdown records are captured.
 // Seeks to the end of the file on open so that only new events are forwarded.
 func (t *Tailer) Run() {
+	defer close(t.done)
+
 	var f *os.File
 	var reader *bufio.Reader
 	var offset int64
@@ -79,11 +89,19 @@ func (t *Tailer) Run() {
 	}
 	defer f.Close()
 
+	stopped := false
+	var drainDeadline time.Time
 	for {
-		select {
-		case <-t.stop:
-			return
-		default:
+		// Once Stop is signalled we stop polling for new data but keep reading
+		// what is already on disk until EOF, so pipelock's final checkpoint is
+		// not left unread.
+		if !stopped {
+			select {
+			case <-t.stop:
+				stopped = true
+				drainDeadline = time.Now().Add(t.drainTimeout)
+			default:
+			}
 		}
 
 		line, err := reader.ReadString('\n')
@@ -99,11 +117,17 @@ func (t *Tailer) Run() {
 						}
 					}
 				}
+				if stopped {
+					return // drained to EOF after stop
+				}
 				time.Sleep(200 * time.Millisecond)
 				continue
 			}
 			// Real read error — try to reopen.
 			_ = f.Close()
+			if stopped {
+				return
+			}
 			time.Sleep(500 * time.Millisecond)
 			openFile()
 			continue
@@ -113,24 +137,38 @@ func (t *Tailer) Run() {
 		offset, _ = f.Seek(0, io.SeekCurrent)
 
 		line = trimNewline(line)
-		if line == "" {
-			continue
+		if line != "" {
+			var evt AuditEvent
+			if err := json.Unmarshal([]byte(line), &evt); err == nil {
+				if stopped {
+					// Draining: deliver to the still-alive consumer, bounded by
+					// the drain deadline so a dead consumer can't hang us.
+					select {
+					case t.events <- evt:
+					case <-time.After(time.Until(drainDeadline)):
+						return
+					}
+				} else {
+					select {
+					case t.events <- evt:
+					case <-t.stop:
+						stopped = true
+						drainDeadline = time.Now().Add(t.drainTimeout)
+					}
+				}
+			}
 		}
-		var evt AuditEvent
-		if err := json.Unmarshal([]byte(line), &evt); err != nil {
-			continue // skip malformed lines
-		}
-		select {
-		case t.events <- evt:
-		case <-t.stop:
-			return
+
+		if stopped && time.Now().After(drainDeadline) {
+			return // safety bound — don't drain forever if writes keep coming
 		}
 	}
 }
 
-// Stop signals the tailer to exit.
+// Stop signals the tailer to drain to EOF and exit, then waits for it to finish.
 func (t *Tailer) Stop() {
 	close(t.stop)
+	<-t.done
 }
 
 func trimNewline(s string) string {

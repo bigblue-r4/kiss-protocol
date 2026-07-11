@@ -83,15 +83,21 @@ func (b *Bridge) Start() error {
 
 // Stop halts event forwarding and shuts down the pipelock subprocess.
 // Safe to call even if Start returned an error.
+//
+// Order matters: pipelock is stopped first so it flushes its final
+// transcript_root and shutdown checkpoint to the audit log and evidence dir.
+// Only then are the tailers stopped — each drains to EOF before exiting, so the
+// clean-shutdown records are read into the witness log instead of being lost.
+// The forwarder is torn down last and drains any buffered events on its way out.
 func (b *Bridge) Stop() {
 	if !b.enabled {
 		return
 	}
+	b.runner.Stop()
 	b.tailer.Stop()
 	if b.evidence != nil {
 		b.evidence.Stop()
 	}
-	b.runner.Stop()
 	close(b.stopForward)
 	<-b.done
 }
@@ -122,6 +128,26 @@ func (b *Bridge) forward() {
 			level, event := classifyReceipt(evt)
 			_ = b.store.Append(level, event, "pipelock", evt)
 		case <-b.stopForward:
+			// Tailers have already drained to EOF and exited by the time
+			// stopForward is closed, so anything left is sitting in the channel
+			// buffers. Flush it before exiting so no receipt is dropped.
+			b.drainRemaining()
+			return
+		}
+	}
+}
+
+// drainRemaining appends any events still buffered in the channels after the
+// tailers have stopped, then returns once both are empty.
+func (b *Bridge) drainRemaining() {
+	for {
+		select {
+		case evt := <-b.events:
+			_ = b.store.Append(normalizeLevel(evt.Level()), evt.EventName(), "pipelock", evt)
+		case evt := <-b.evEvents:
+			level, event := classifyReceipt(evt)
+			_ = b.store.Append(level, event, "pipelock", evt)
+		default:
 			return
 		}
 	}
@@ -140,13 +166,76 @@ func normalizeLevel(level string) string {
 // classifyReceipt derives a (level, event) label for a flight_recorder entry.
 // The receipt schema varies across pipelock versions, so the whole entry is
 // always forwarded as data and only well-known fields are read for labelling.
+//
+// Field precedence follows Pipelock's flight_recorder envelope (most specific
+// first), so the read/write classification of a real action receipt isn't lost
+// behind its generic top-level type:
+//   - lifecycle/control receipts carry detail.action_record.session_control.kind
+//     (session_open, heartbeat, session_close)
+//   - action receipts (top-level type "action_receipt") carry the canonical
+//     top-level event_kind (e.g. read, write)
+//   - older rows without event_kind fall back to detail.action_record.action_type
+//   - failing all of those, the top-level type is used as-is
 func classifyReceipt(evt pipelock.AuditEvent) (string, string) {
+	m := map[string]interface{}(evt)
+	kind := firstNonEmpty(
+		nestedString(m, "detail", "action_record", "session_control", "kind"),
+		nestedString(m, "event_kind"),
+		nestedString(m, "detail", "action_record", "action_type"),
+		nestedString(m, "type"),
+	)
 	event := "pipelock_receipt"
-	for _, k := range []string{"type", "kind", "decision", "action", "event"} {
-		if v, ok := evt[k].(string); ok && v != "" {
-			event = "pipelock_receipt:" + v
-			break
+	if kind != "" {
+		event = "pipelock_receipt:" + kind
+	}
+
+	// Start from the row's own log level, then elevate on a blocking or warning
+	// verdict so denials stand out in the witness log even if the row logs INFO.
+	level := normalizeLevel(evt.Level())
+	verdict := firstNonEmpty(
+		nestedString(m, "detail", "action_record", "verdict"),
+		nestedString(m, "verdict"),
+	)
+	level = elevateForVerdict(level, verdict)
+	return level, event
+}
+
+// nestedString walks evt down the given keys and returns the string leaf, or ""
+// if any hop is missing or not a string / nested object.
+func nestedString(evt map[string]interface{}, keys ...string) string {
+	var cur interface{} = evt
+	for i, k := range keys {
+		m, ok := cur.(map[string]interface{})
+		if !ok {
+			return ""
+		}
+		cur = m[k]
+		if i == len(keys)-1 {
+			s, _ := cur.(string)
+			return s
 		}
 	}
-	return normalizeLevel(evt.Level()), event
+	return ""
+}
+
+// firstNonEmpty returns the first non-empty string in vals.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// elevateForVerdict raises an INFO row to WARN when Pipelock blocked or warned
+// on the action, leaving already-elevated levels untouched.
+func elevateForVerdict(level, verdict string) string {
+	switch strings.ToLower(verdict) {
+	case "block", "blocked", "deny", "denied", "warn", "warning":
+		if level == "INFO" {
+			return "WARN"
+		}
+	}
+	return level
 }
