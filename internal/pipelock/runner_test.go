@@ -55,14 +55,14 @@ func TestWriteConfigSchema(t *testing.T) {
 func TestWriteConfigSigningKey(t *testing.T) {
 	dir := t.TempDir()
 
-	// Default (no key): flight_recorder is present but unsigned.
+	// Explicitly keyless: signing_key_path is omitted (evidence leg disabled).
 	cfg := DefaultConfig(dir)
 	cfg.SigningKeyPath = ""
 	if err := cfg.WriteConfig(); err != nil {
 		t.Fatalf("WriteConfig: %v", err)
 	}
 	data, _ := os.ReadFile(cfg.ConfigFile)
-	if strings.Contains(string(data), "signing_key_path") {
+	if strings.Contains(string(data), "signing_key_path: \"") {
 		t.Errorf("signing_key_path should be absent when no key is configured\n%s", data)
 	}
 	if !strings.Contains(string(data), "flight_recorder:") {
@@ -83,6 +83,34 @@ func TestWriteConfigSigningKey(t *testing.T) {
 		out, err := exec.Command(bin, "check", "--config", cfg.ConfigFile).CombinedOutput()
 		if err != nil {
 			t.Fatalf("pipelock check rejected signed config: %v\n%s", err, out)
+		}
+	}
+}
+
+// TestWriteConfigProvisionsDefaultKey verifies that the default config emits a
+// signing_key_path and that WriteConfig auto-generates the key file, so the
+// evidence leg is active out of the box (guards issue #10 bug #3: no key meant
+// Pipelock wrote no evidence at all).
+func TestWriteConfigProvisionsDefaultKey(t *testing.T) {
+	dir := t.TempDir()
+	cfg := DefaultConfig(dir)
+	if cfg.SigningKeyPath == "" {
+		t.Fatal("default config should provision a signing key path")
+	}
+	if err := cfg.WriteConfig(); err != nil {
+		t.Fatalf("WriteConfig: %v", err)
+	}
+	if _, err := os.Stat(cfg.SigningKeyPath); err != nil {
+		t.Fatalf("signing key not generated at %s: %v", cfg.SigningKeyPath, err)
+	}
+	data, _ := os.ReadFile(cfg.ConfigFile)
+	if !strings.Contains(string(data), "signing_key_path: \""+cfg.SigningKeyPath+"\"") {
+		t.Errorf("config missing default signing_key_path\n%s", data)
+	}
+	if bin, err := exec.LookPath("pipelock"); err == nil {
+		out, err := exec.Command(bin, "check", "--config", cfg.ConfigFile).CombinedOutput()
+		if err != nil {
+			t.Fatalf("pipelock check rejected default signed config: %v\n%s", err, out)
 		}
 	}
 }

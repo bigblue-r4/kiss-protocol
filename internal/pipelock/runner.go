@@ -75,9 +75,10 @@ behavioral_baseline:
   deviation_action: warn
 
 # Hash-chained, tamper-evident evidence log. The witness bridge tails this
-# directory and folds every entry into the witness Merkle log alongside the
-# raw audit events. When a signing key is provisioned, entries are signed
-# decision receipts; without one they are unsigned but still hash-chained.
+# directory and folds every signed decision receipt into the witness Merkle log
+# alongside the raw audit events. A signing key is required: Pipelock's recorder
+# is inert without flight_recorder.signing_key_path and writes nothing, so
+# witness provisions one by default (see EnsureSigningKey).
 flight_recorder:
   enabled: true
   dir: "{{.EvidenceDir}}"
@@ -95,10 +96,12 @@ type Config struct {
 	BinPath     string
 	ProfileDir  string
 	EvidenceDir string
-	// SigningKeyPath, when set, is the Ed25519 key Pipelock uses to sign
-	// flight_recorder decision receipts. Optional: without it the evidence log
-	// is still written and hash-chained, just unsigned. Provision a key with
-	// `pipelock keygen` / `pipelock init` and point this at the private key.
+	// SigningKeyPath is the Ed25519 key Pipelock uses to sign flight_recorder
+	// decision receipts. It is required for any evidence to be produced at all:
+	// without it Pipelock's recorder is inert and writes nothing. WriteConfig
+	// auto-generates a Pipelock-format key here if the file is absent, so leave
+	// it set (DefaultConfig points it under primaryDir). Set it empty only to
+	// deliberately disable the evidence leg.
 	SigningKeyPath string
 }
 
@@ -111,10 +114,21 @@ func DefaultConfig(primaryDir string) *Config {
 		BinPath:     "pipelock",
 		ProfileDir:  filepath.Join(primaryDir, "pipelock-profiles"),
 		EvidenceDir: filepath.Join(primaryDir, "pipelock-evidence"),
-		// Opt-in receipt signing; operators set PIPELOCK_SIGNING_KEY after
-		// provisioning a key. Empty is valid (unsigned hash-chained evidence).
-		SigningKeyPath: os.Getenv("PIPELOCK_SIGNING_KEY"),
+		// A signing key is required for evidence to be emitted at all, so witness
+		// provisions one by default under primaryDir (WriteConfig generates it if
+		// missing). PIPELOCK_SIGNING_KEY overrides the location to reuse a key
+		// provisioned elsewhere.
+		SigningKeyPath: defaultSigningKeyPath(primaryDir),
 	}
+}
+
+// defaultSigningKeyPath returns the PIPELOCK_SIGNING_KEY override if set,
+// otherwise a witness-managed key path under primaryDir.
+func defaultSigningKeyPath(primaryDir string) string {
+	if p := os.Getenv("PIPELOCK_SIGNING_KEY"); p != "" {
+		return p
+	}
+	return filepath.Join(primaryDir, "pipelock-keys", "id_ed25519")
 }
 
 // WriteConfig generates and writes the Pipelock YAML config.
@@ -130,6 +144,12 @@ func (c *Config) WriteConfig() error {
 				return err
 			}
 		}
+	}
+	// Provision the flight_recorder signing key if it does not exist yet.
+	// Without it Pipelock's recorder is inert and no evidence is written, so the
+	// key must be in place before the config that references it is used.
+	if _, err := EnsureSigningKey(c.SigningKeyPath); err != nil {
+		return err
 	}
 	tmpl, err := template.New("cfg").Parse(configTemplate)
 	if err != nil {
