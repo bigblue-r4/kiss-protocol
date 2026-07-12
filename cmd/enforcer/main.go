@@ -42,7 +42,7 @@ import (
 	"github.com/bigblue-r4/kiss-protocol/internal/soul"
 )
 
-const version = "3.2.2"
+const version = "3.2.3"
 
 func main() {
 	if len(os.Args) < 2 {
