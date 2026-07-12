@@ -167,13 +167,16 @@ func normalizeLevel(level string) string {
 // The receipt schema varies across pipelock versions, so the whole entry is
 // always forwarded as data and only well-known fields are read for labelling.
 //
-// Field precedence follows Pipelock's flight_recorder envelope (most specific
-// first), so the read/write classification of a real action receipt isn't lost
-// behind its generic top-level type:
+// Field precedence follows Pipelock's flight_recorder Entry envelope (verified
+// against the v3.0.0 recorder source), most specific first, so the read/write
+// classification of a real action receipt isn't lost behind its generic
+// top-level type:
 //   - lifecycle/control receipts carry detail.action_record.session_control.kind
-//     (session_open, heartbeat, session_close)
-//   - action receipts (top-level type "action_receipt") carry the canonical
-//     top-level event_kind (e.g. read, write)
+//     (session_open, heartbeat, session_close). Not emitted by the v3.0.0 tag —
+//     kept as forward-compat per the maintainer's field guidance.
+//   - the canonical top-level event_kind: the action verb on action_receipt rows
+//     (read, write, …), "proxy_decision" on decision rows, "checkpoint" on
+//     checkpoint rows, the surface on capture rows.
 //   - older rows without event_kind fall back to detail.action_record.action_type
 //   - failing all of those, the top-level type is used as-is
 func classifyReceipt(evt pipelock.AuditEvent) (string, string) {
@@ -191,9 +194,12 @@ func classifyReceipt(evt pipelock.AuditEvent) (string, string) {
 
 	// Start from the row's own log level, then elevate on a blocking or warning
 	// verdict so denials stand out in the witness log even if the row logs INFO.
+	// Action receipts carry the verdict under action_record; decision rows carry
+	// it at the top of detail (DecisionRecord.Verdict).
 	level := normalizeLevel(evt.Level())
 	verdict := firstNonEmpty(
 		nestedString(m, "detail", "action_record", "verdict"),
+		nestedString(m, "detail", "verdict"),
 		nestedString(m, "verdict"),
 	)
 	level = elevateForVerdict(level, verdict)

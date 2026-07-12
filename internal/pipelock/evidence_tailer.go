@@ -48,6 +48,10 @@ func NewEvidenceTailer(dir string, events chan AuditEvent) *EvidenceTailer {
 	}
 }
 
+// SetPollEvery overrides the directory poll interval. Intended for tests that
+// need faster discovery; the default (1s) is fine in production.
+func (e *EvidenceTailer) SetPollEvery(d time.Duration) { e.pollEvery = d }
+
 // Run discovers evidence files and follows each one. Blocks until Stop.
 func (e *EvidenceTailer) Run() {
 	firstScan := true
