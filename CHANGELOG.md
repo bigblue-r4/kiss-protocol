@@ -4,7 +4,7 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 
 ---
 
-## [3.2.3] — 2026-07-11
+## [3.2.3] — 2026-07-12
 
 Fixes from @luckyPipewrench's live interoperability test (kiss-protocol v3.2.1 ↔ Pipelock v3.0.0) on issue #10.
 
