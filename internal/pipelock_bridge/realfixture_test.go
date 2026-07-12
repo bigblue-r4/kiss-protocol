@@ -90,22 +90,27 @@ func TestCleanShutdownIngestion(t *testing.T) {
 	}
 	b.evidence.SetPollEvery(20 * time.Millisecond)
 
-	// Start just the evidence tailer + forwarder (no pipelock subprocess).
-	b.enabled = true
-	go b.forward()
-	go b.evidence.Run()
-
 	evts := readFixture(t)
 	if err := os.MkdirAll(cfg.EvidenceDir, 0700); err != nil {
 		t.Fatalf("mkdir evidence dir: %v", err)
 	}
 	evFile := filepath.Join(cfg.EvidenceDir, "evidence-sess-7f3a.jsonl")
 
-	// Stream the receipts, holding back the closing checkpoint (last entry).
+	// Start just the evidence tailer + forwarder (no pipelock subprocess), and
+	// let the first (empty) directory scan complete so the evidence file is
+	// discovered as a new file and read from the start rather than skipped.
+	b.enabled = true
+	go b.forward()
+	go b.evidence.Run()
+	time.Sleep(80 * time.Millisecond)
+
+	// Stream the receipts, holding back the closing checkpoint (last entry), and
+	// wait — by polling the store, not a fixed sleep — until they are ingested.
+	// This keeps the test deterministic on slow CI runners.
 	for _, evt := range evts[:len(evts)-1] {
 		writeJSONL(t, evFile, evt)
 	}
-	time.Sleep(120 * time.Millisecond) // let the tailer discover + ingest them
+	waitForSize(t, s, uint64(len(evts)-1), 5*time.Second)
 
 	// Pipelock's final checkpoint, written immediately before shutdown.
 	writeJSONL(t, evFile, evts[len(evts)-1])
@@ -130,6 +135,19 @@ func TestCleanShutdownIngestion(t *testing.T) {
 	if !sawCheckpoint {
 		t.Fatal("final shutdown checkpoint did not reach the witness log")
 	}
+}
+
+// waitForSize blocks until the store holds at least want leaves or timeout.
+func waitForSize(t *testing.T, s *store.Store, want uint64, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if s.Head().Size >= want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("store did not reach %d leaves within %s (have %d)", want, timeout, s.Head().Size)
 }
 
 func writeJSONL(t *testing.T, path string, evt pipelock.AuditEvent) {
