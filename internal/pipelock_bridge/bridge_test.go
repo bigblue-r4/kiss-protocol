@@ -9,11 +9,14 @@ import (
 	"github.com/bigblue-r4/kiss-protocol/internal/store"
 )
 
+// testKey is the fixed all-zero store key used across the bridge tests, so a
+// store opened by openTestStore can be reopened with store.ReadAll.
+func testKey() []byte { return make([]byte, 32) }
+
 func openTestStore(t *testing.T) *store.Store {
 	t.Helper()
 	dir := t.TempDir()
-	key := make([]byte, 32)
-	s, err := store.Open(dir, key, nil)
+	s, err := store.Open(dir, testKey(), nil)
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
