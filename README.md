@@ -12,9 +12,26 @@ Tamper-evident machine-state logging for AI agent environments. Witness takes a 
 A compromised enforcer cannot falsify the core witness record.
 
 [![CI](https://github.com/bigblue-r4/kiss-protocol/actions/workflows/ci.yml/badge.svg)](https://github.com/bigblue-r4/kiss-protocol/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/bigblue-r4/kiss-protocol)](https://github.com/bigblue-r4/kiss-protocol/releases)
+[![Go](https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go&logoColor=white)](go.mod)
 [![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 See [CHANGELOG.md](CHANGELOG.md) for full version history.
+
+## Contents
+
+- [Quick start](#quick-start)
+- [Commands](#commands)
+- [Status view](#status-view)
+- [Gossip mesh](#gossip-mesh)
+- [Transparency mirror](#transparency-mirror)
+- [Soul file](#soul-file)
+- [What is here](#what-is-here)
+- [Build from source](#build-from-source)
+- [Verifying a release](#verifying-a-release)
+- [Reproducible builds](#reproducible-builds)
+- [Security](#security)
+- [License](#license)
 
 ---
 
