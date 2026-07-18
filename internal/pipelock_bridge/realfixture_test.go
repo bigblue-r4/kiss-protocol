@@ -21,8 +21,12 @@ import (
 const fixturePath = "testdata/pipelock_v3_evidence.jsonl"
 
 func readFixture(t *testing.T) []pipelock.AuditEvent {
+	return readFixtureFile(t, fixturePath)
+}
+
+func readFixtureFile(t *testing.T, path string) []pipelock.AuditEvent {
 	t.Helper()
-	f, err := os.Open(fixturePath)
+	f, err := os.Open(path)
 	if err != nil {
 		t.Fatalf("open fixture: %v", err)
 	}
@@ -70,6 +74,56 @@ func TestClassifyReceiptRealFixture(t *testing.T) {
 		level, event := classifyReceipt(evt)
 		if level != want[i].level || event != want[i].event {
 			t.Errorf("entry %d: got (%s, %s), want (%s, %s)", i, level, event, want[i].level, want[i].event)
+		}
+	}
+}
+
+// capturePathV310 is a REAL signed Pipelock v3.1.0 flight-recorder chain,
+// contributed by @luckyPipewrench on issue #14 (a live loopback proxy session).
+// It exercises the two mappings that could not be confirmed against the v3.0.0
+// tag source: session_control lifecycle receipts and the v2 evidence_receipt
+// dual-emit where the proxy_decision verdict lives at detail.payload.verdict.
+const capturePathV310 = "testdata/pipelock_v310_capture.jsonl"
+
+// TestClassifyReceiptV310Capture runs the real v3.1.0 chain through
+// classifyReceipt and locks in the confirmed field mapping (issue #14):
+//   - session_control.kind (session_open/heartbeat/session_close) wins even when
+//     the row's own event_kind is "unclassified",
+//   - v2 evidence_receipt rows classify as proxy_decision,
+//   - action verbs, transcript_root, and checkpoint are labelled from event_kind.
+func TestClassifyReceiptV310Capture(t *testing.T) {
+	evts := readFixtureFile(t, capturePathV310)
+	wantEvents := []string{
+		"pipelock_receipt:session_open",
+		"pipelock_receipt:heartbeat",
+		"pipelock_receipt:heartbeat",
+		"pipelock_receipt:read",
+		"pipelock_receipt:proxy_decision",
+		"pipelock_receipt:read",
+		"pipelock_receipt:proxy_decision",
+		"pipelock_receipt:read",
+		"pipelock_receipt:proxy_decision",
+		"pipelock_receipt:read",
+		"pipelock_receipt:proxy_decision",
+		"pipelock_receipt:heartbeat",
+		"pipelock_receipt:heartbeat",
+		"pipelock_receipt:heartbeat",
+		"pipelock_receipt:session_close",
+		"pipelock_receipt:transcript_root",
+		"pipelock_receipt:checkpoint",
+	}
+	if len(evts) != len(wantEvents) {
+		t.Fatalf("expected %d capture entries, got %d", len(wantEvents), len(evts))
+	}
+	for i, evt := range evts {
+		level, event := classifyReceipt(evt)
+		if event != wantEvents[i] {
+			t.Errorf("entry %d: got event %q, want %q", i, event, wantEvents[i])
+		}
+		// The capture is a benign session — every verdict is "allow", so nothing
+		// should elevate above INFO.
+		if level != "INFO" {
+			t.Errorf("entry %d: got level %q, want INFO (benign capture)", i, level)
 		}
 	}
 }

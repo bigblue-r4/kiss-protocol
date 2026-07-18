@@ -172,8 +172,10 @@ func normalizeLevel(level string) string {
 // classification of a real action receipt isn't lost behind its generic
 // top-level type:
 //   - lifecycle/control receipts carry detail.action_record.session_control.kind
-//     (session_open, heartbeat, session_close). Not emitted by the v3.0.0 tag —
-//     kept as forward-compat per the maintainer's field guidance.
+//     (session_open, heartbeat, session_close), inline on a v1 action_receipt.
+//     This shipped in Pipelock v3.1.0 (confirmed against a live capture); against
+//     the older v3.0.0 tag there are no session-lifecycle receipts at all, so the
+//     path is simply a harmless no-op there.
 //   - the canonical top-level event_kind: the action verb on action_receipt rows
 //     (read, write, …), "proxy_decision" on decision rows, "checkpoint" on
 //     checkpoint rows, the surface on capture rows.
@@ -194,11 +196,16 @@ func classifyReceipt(evt pipelock.AuditEvent) (string, string) {
 
 	// Start from the row's own log level, then elevate on a blocking or warning
 	// verdict so denials stand out in the witness log even if the row logs INFO.
-	// Action receipts carry the verdict under action_record; decision rows carry
-	// it at the top of detail (DecisionRecord.Verdict).
+	// A live v3.1.0 proxy dual-emits every decision (confirmed against a signed
+	// capture): the v1 action_receipt carries the verdict at
+	// detail.action_record.verdict, and the v2 evidence_receipt
+	// (event_kind:proxy_decision) carries it at detail.payload.verdict. The bare
+	// detail.verdict (DecisionRecord) path is an internal API the proxy does not
+	// emit on a live chain — kept last for back-compat, harmless if never hit.
 	level := normalizeLevel(evt.Level())
 	verdict := firstNonEmpty(
 		nestedString(m, "detail", "action_record", "verdict"),
+		nestedString(m, "detail", "payload", "verdict"),
 		nestedString(m, "detail", "verdict"),
 		nestedString(m, "verdict"),
 	)

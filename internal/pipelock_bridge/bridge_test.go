@@ -155,6 +155,21 @@ func TestClassifyReceiptEnvelope(t *testing.T) {
 			},
 			wantLevel: "WARN", wantEvent: "pipelock_receipt:write",
 		},
+		{
+			// Live v3.1.0 v2 evidence_receipt: proxy_decision row carries the
+			// verdict under detail.payload.verdict (not action_record).
+			name: "v2 evidence_receipt proxy_decision verdict elevates via payload",
+			evt: pipelock.AuditEvent{
+				"type": "evidence_receipt", "event_kind": "proxy_decision",
+				"record_type": "evidence_receipt_v2", "level": "info",
+				"detail": map[string]interface{}{
+					"payload": map[string]interface{}{
+						"verdict": "denied", "action_type": "http_request", "target": "example.com",
+					},
+				},
+			},
+			wantLevel: "WARN", wantEvent: "pipelock_receipt:proxy_decision",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
