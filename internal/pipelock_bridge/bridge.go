@@ -100,6 +100,19 @@ func (b *Bridge) Stop() {
 	}
 	close(b.stopForward)
 	<-b.done
+	b.tailer.Flush()
+}
+
+// ResumeAuditFrom saves the audit-log read position to statePath so a restarted
+// witness ingests audit events written while it was down, and records each
+// (re)open in the witness log. Call before Start. (flight_recorder evidence files
+// are tailed separately and are not covered by this.)
+func (b *Bridge) ResumeAuditFrom(statePath string) {
+	b.tailer.SetStateFile(statePath)
+	b.tailer.OnOpen(func(i pipelock.OpenInfo) {
+		level, event, data := pipelock.OpenEvent("pipelock_audit", i)
+		_ = b.store.Append(level, event, "pipelock", data)
+	})
 }
 
 // ProxyAddr returns the HTTP proxy address agents should use (HTTPS_PROXY / HTTP_PROXY).
@@ -119,7 +132,9 @@ func (b *Bridge) forward() {
 				events = nil
 				continue
 			}
-			_ = b.store.Append(normalizeLevel(evt.Level()), evt.EventName(), "pipelock", evt)
+			if b.store.Append(normalizeLevel(evt.Level()), evt.EventName(), "pipelock", evt) == nil {
+				b.tailer.Ack()
+			}
 		case evt, ok := <-evEvents:
 			if !ok {
 				evEvents = nil
@@ -143,7 +158,9 @@ func (b *Bridge) drainRemaining() {
 	for {
 		select {
 		case evt := <-b.events:
-			_ = b.store.Append(normalizeLevel(evt.Level()), evt.EventName(), "pipelock", evt)
+			if b.store.Append(normalizeLevel(evt.Level()), evt.EventName(), "pipelock", evt) == nil {
+				b.tailer.Ack()
+			}
 		case evt := <-b.evEvents:
 			level, event := classifyReceipt(evt)
 			_ = b.store.Append(level, event, "pipelock", evt)

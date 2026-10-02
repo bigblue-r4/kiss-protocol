@@ -228,3 +228,84 @@ func TestClassifyForge(t *testing.T) {
 		t.Errorf("got %s/%s", l, e)
 	}
 }
+
+// The gap a witness restart used to leave: decisions the harness logs while the
+// witness is down must still reach the record, and the record must say it caught up.
+func TestDecisionsLoggedWhileWitnessIsDownAreRecordedAfterRestart(t *testing.T) {
+	storeDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "decisions.jsonl")
+	statePath := filepath.Join(storeDir, "tail-state", "sbh_decision_log.json")
+	lines := fixtureLines(t, "decisions.jsonl") // 3 real SBH decision lines
+
+	appendLine(t, logPath, `{"event":"before_witness_existed"}`) // history: not ingested
+
+	// Run 1: witness up, harness logs one decision, clean shutdown.
+	s1, err := store.Open(storeDir, testKey(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b1 := NewDecisionLog(logPath, s1)
+	b1.ResumeFrom(statePath, "sbh_decision_log")
+	b1.Start()
+	deadline := time.Now().Add(10 * time.Second)
+	for s1.Head().Size < 1 && time.Now().Before(deadline) { // the tail_fresh open event
+		time.Sleep(20 * time.Millisecond)
+	}
+	appendLine(t, logPath, lines[0])
+	for s1.Head().Size < 2 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	b1.Stop()
+	if err := s1.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Witness is down. The harness keeps deciding.
+	appendLine(t, logPath, lines[1])
+	appendLine(t, logPath, lines[2])
+
+	// Run 2: witness restarts.
+	s2, err := store.Open(storeDir, testKey(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	b2 := NewDecisionLog(logPath, s2)
+	b2.ResumeFrom(statePath, "sbh_decision_log")
+	b2.Start()
+	deadline = time.Now().Add(10 * time.Second)
+	for s2.Head().Size < 5 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	b2.Stop()
+
+	entries, err := store.ReadAll(storeDir, testKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Event)
+	}
+	want := []string{
+		"tail_fresh",                // run 1 starts at the end of the existing log
+		"sbh_decision:pass",         // logged while up
+		"tail_resumed",              // run 2 picks up where run 1 stopped
+		"sbh_decision:stop_and_ask", // logged while down
+		"sbh_decision:pass",         // logged while down (escalated turn)
+	}
+	if len(names) != len(want) {
+		t.Fatalf("record = %v, want %v", names, want)
+	}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Fatalf("record = %v, want %v", names, want)
+		}
+	}
+	if p := payload(t, entries[2]); p["catch_up_bytes"].(float64) <= 0 {
+		t.Errorf("resume event does not show what was caught up: %v", p)
+	}
+	if n, err := s2.VerifyIntegrity(); err != nil || n != uint64(len(want)) {
+		t.Fatalf("VerifyIntegrity = %d, %v", n, err)
+	}
+}

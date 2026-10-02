@@ -6,6 +6,12 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- **Events written while the witness was down were never recorded.** The NDJSON tailer seeked to the end of an existing file on every start, so a witness restart silently dropped everything a feed logged in the meantime — a gap in the record nobody could see. Tailers now save their read position under `<primary>/tail-state/` and resume from it (Pipelock audit log, and all three split-brain-harness logs). The position advances only past entries the store accepted, so a crash re-reads rather than skips: delivery is at-least-once, and a repeated entry is visible where a missing one would not be.
+- **Each (re)open is now recorded:** `tail_fresh`, `tail_resumed` (with `catch_up_bytes`), `tail_rotated`, and **WARN** `tail_restarted` when a feed's file was replaced or truncated while the witness was down — whatever was unread in the old file is gone, and the record now says so.
+- **Half-written lines were dropped.** A line the tailer caught mid-write was discarded and its remainder failed to parse; the tailer now rewinds and reads it once it is complete.
+- **Lines at the start of a rotated file were skipped.** After rotation the tailer reopened the new file at its end; it now reads it from the start. Rotation is also detected by file identity, not only by the file shrinking.
+
 ### Added
 - **Every split-brain-harness verdict is now witnessed, not only forge runs.** The SBH bridge tailed only `SBH_AUDIT_PATH`, the forge (tool-generation) log, so the harness's actual decisions never reached the Merkle log. Two more SBH logs are now tailed into it as source `sbh`:
   - `SBH_DECISION_LOG` (split-brain-harness ≥ the release after 1.5.1): one line per request `sbh serve` analysed. Event `sbh_decision:stop_and_ask` or `sbh_decision:pass`; WARN when the gate stopped, the risk was high, or the turn escalated.

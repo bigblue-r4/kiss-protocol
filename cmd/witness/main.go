@@ -327,6 +327,7 @@ func cmdStart() {
 	// ── Pipelock bridge ────────────────────────────────────────────────────
 	plCfg := pipelock.DefaultConfig(cfg.PrimaryDir)
 	bridge := pipelock_bridge.New(plCfg, s)
+	bridge.ResumeAuditFrom(filepath.Join(cfg.PrimaryDir, "tail-state", "pipelock_audit.json"))
 	if err := bridge.Start(); err != nil {
 		warn("Pipelock unavailable: %v (agent events will not be forwarded)", err)
 	} else {
@@ -349,6 +350,8 @@ func cmdStart() {
 			continue
 		}
 		br := b.make(b.path, s)
+		feed := "sbh_" + strings.ReplaceAll(b.label, " ", "_")
+		br.ResumeFrom(filepath.Join(cfg.PrimaryDir, "tail-state", feed+".json"), feed)
 		br.Start()
 		sbhBridges = append(sbhBridges, br)
 		fmt.Printf("[witness] SBH %s tailing → %s\n", b.label, b.path)
