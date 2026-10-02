@@ -59,6 +59,17 @@ func NewSessionLog(path string, s *store.Store) *Bridge {
 	return newBridge(path, s, ClassifyEscalation)
 }
 
+// ResumeFrom saves the read position to statePath so a restarted witness picks
+// up lines written while it was down, and records each (re)open in the witness
+// log. Call before Start.
+func (b *Bridge) ResumeFrom(statePath, feed string) {
+	b.tailer.SetStateFile(statePath)
+	b.tailer.OnOpen(func(i pipelock.OpenInfo) {
+		level, event, data := pipelock.OpenEvent(feed, i)
+		_ = b.store.Append(level, event, "sbh", data)
+	})
+}
+
 // Start begins tailing and forwarding.
 func (b *Bridge) Start() {
 	go b.tailer.Run()
@@ -70,6 +81,7 @@ func (b *Bridge) Stop() {
 	b.tailer.Stop()
 	close(b.stopForward)
 	<-b.done
+	b.tailer.Flush()
 }
 
 func (b *Bridge) forward() {
@@ -81,7 +93,9 @@ func (b *Bridge) forward() {
 				return
 			}
 			level, event := b.classify(evt)
-			_ = b.store.Append(level, event, "sbh", evt)
+			if b.store.Append(level, event, "sbh", evt) == nil {
+				b.tailer.Ack() // only a stored entry moves the resume position
+			}
 		case <-b.stopForward:
 			return
 		}
