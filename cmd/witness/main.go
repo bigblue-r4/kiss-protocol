@@ -335,12 +335,29 @@ func cmdStart() {
 			bridge.ProxyAddr(), bridge.ProxyAddr())
 	}
 
-	// ── SBH forge audit bridge ─────────────────────────────────────────────
-	var sbhBridge *sbh.Bridge
-	if cfg.SBHAuditPath != "" {
-		sbhBridge = sbh.New(cfg.SBHAuditPath, s)
-		sbhBridge.Start()
-		fmt.Printf("[witness] SBH forge audit tailing → %s\n", cfg.SBHAuditPath)
+	// ── SBH bridges: forge runs, per-request verdicts, escalations ─────────
+	var sbhBridges []*sbh.Bridge
+	for _, b := range []struct {
+		path, label string
+		make        func(string, *store.Store) *sbh.Bridge
+	}{
+		{cfg.SBHAuditPath, "forge audit", sbh.New},
+		{cfg.SBHDecisionLogPath, "decision log", sbh.NewDecisionLog},
+		{cfg.SBHSessionLogPath, "session escalations", sbh.NewSessionLog},
+	} {
+		if b.path == "" {
+			continue
+		}
+		br := b.make(b.path, s)
+		br.Start()
+		sbhBridges = append(sbhBridges, br)
+		fmt.Printf("[witness] SBH %s tailing → %s\n", b.label, b.path)
+	}
+	stopSBH := func() {
+		for _, br := range sbhBridges {
+			br.Stop()
+		}
+		sbhBridges = nil
 	}
 
 	// ── Anomaly detector ──────────────────────────────────────────────────
@@ -357,7 +374,7 @@ func cmdStart() {
 		"pid":          os.Getpid(),
 		"genesis_hash": snap.Hash,
 		"pipelock":     plCfg.AuditLogPath(),
-		"sbh_enabled":  cfg.SBHAuditPath != "",
+		"sbh_enabled":  len(sbhBridges) > 0,
 	})
 
 	fmt.Printf("[witness] Daemon started (PID %d)\n", os.Getpid())
@@ -385,9 +402,7 @@ func cmdStart() {
 	fireDeath := func(reason, detail string) {
 		fmt.Printf("[witness] Death trigger: %s — writing snapshot…\n", reason)
 		_ = s.Append("DEATH", reason, "witness", map[string]string{"detail": detail})
-		if sbhBridge != nil {
-			sbhBridge.Stop()
-		}
+		stopSBH()
 		bridge.Stop()
 		adet.Stop()
 		_ = s.Close()
