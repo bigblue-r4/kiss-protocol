@@ -4,6 +4,21 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 
 ---
 
+## [3.2.4] — 2026-10-02
+
+### Fixed
+- **Live Pipelock decision verdicts not elevated** (#14, #15): a live Pipelock v3.1.0 proxy dual-emits every decision, and the v2 `evidence_receipt` (`event_kind: proxy_decision`, `record_type: evidence_receipt_v2`) carries its verdict at `detail.payload.verdict`, which the bridge did not read. A blocked live decision now raises the witness entry to WARN. Verdict precedence: `detail.action_record.verdict` → `detail.payload.verdict` → `detail.verdict` → `verdict`. `session_control` lifecycle classification is confirmed correct against live v3.1.0 output. Thanks to @luckyPipewrench for the signed capture.
+- **Installer could source the wrong `_core.sh`** (#18): both installer entry points ran an unchecked `cd "$(dirname "$0")"` before `source ./_core.sh`. If the `cd` failed, the installer kept running in the current directory and sourced whatever `_core.sh` was there. Finder starts the `.command` launcher in the user's home directory, exactly where a stray file would be. Both now resolve the script directory once, fail loudly if it or `_core.sh` cannot be found, and source by absolute path. Checksum verification (`VERIFY.txt`, payload only) is unaffected.
+
+### Tests
+- Real signed Pipelock v3.1.0 flight-recorder capture (17 receipts: session lifecycle and proxy decisions) committed as a fixture, with a classification test over every row (#15).
+- HIFAS fraud verdicts driven through the real tailer: entries classify as `hifas_verdict` with payloads intact, and the HIFAS BLAKE3 hash chain is shown to survive ingestion from genesis (#17).
+
+### Docs
+- README release/Go badges and a table of contents (#16); v3.2.3 changelog date corrected to its publish date.
+
+---
+
 ## [3.2.3] — 2026-07-12
 
 Fixes from @luckyPipewrench's live interoperability test (kiss-protocol v3.2.1 ↔ Pipelock v3.0.0) on issue #10.
