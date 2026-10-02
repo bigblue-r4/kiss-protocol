@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // Config is the kiss-core witness configuration.
@@ -26,6 +27,20 @@ type Config struct {
 	SBHDecisionLogPath string `json:"sbh_decision_log_path,omitempty"`
 	// SBHSessionLogPath is split-brain-harness's session escalation log (SBH_SESSION_LOG).
 	SBHSessionLogPath string `json:"sbh_session_log_path,omitempty"`
+	// FarmEventsPath is a farm-automation NDJSON feed (docs/farm-events.md):
+	// readings, alarms, setting changes, access and health records.
+	FarmEventsPath string `json:"farm_events_path,omitempty"`
+	// FarmSilenceMinutes flags a farm source that stops reporting for this long
+	// (0 = default of 10).
+	FarmSilenceMinutes int `json:"farm_silence_minutes,omitempty"`
+}
+
+// FarmSilence is the configured silence threshold, defaulting to 10 minutes.
+func (c *Config) FarmSilence() time.Duration {
+	if c.FarmSilenceMinutes > 0 {
+		return time.Duration(c.FarmSilenceMinutes) * time.Minute
+	}
+	return 10 * time.Minute
 }
 
 // DefaultConfig returns a config with sensible defaults.
@@ -59,6 +74,9 @@ func Load(path string) (*Config, error) {
 	}
 	if p := os.Getenv("SBH_SESSION_LOG"); p != "" {
 		cfg.SBHSessionLogPath = p
+	}
+	if p := os.Getenv("FARM_EVENTS_PATH"); p != "" {
+		cfg.FarmEventsPath = p
 	}
 	return cfg, nil
 }
