@@ -1,0 +1,6 @@
+{"ts":"2026-10-02T21:00:00Z","source":"house-3/controller","kind":"reading","metric":"ammonia_ppm","value":18.5,"unit":"ppm"}
+{"ts":"2026-10-02T21:01:00Z","source":"house-3/controller","kind":"alarm","alarm":"high_temperature","severity":"critical","value":92.1,"unit":"F"}
+{"ts":"2026-10-02T21:02:00Z","source":"house-3/controller","kind":"setting_change","setting":"min_ventilation_pct","from":30,"to":10,"by":"remote:jdoe"}
+{"ts":"2026-10-02T21:03:00Z","source":"house-3/entry-door","kind":"access","door":"house-3/entry","person":"badge:1042","direction":"in"}
+{"ts":"2026-10-02T21:04:00Z","source":"office/records","kind":"health","record":"vaccination","flock":"F-2026-41","product":"example-vaccine","by":"crew:ana"}
+{"ts":"2026-10-02T21:05:00Z","source":"house-4/controller","kind":"heartbeat"}

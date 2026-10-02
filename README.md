@@ -76,6 +76,10 @@ for the full isolation contract and recommended OS user separation.
 
 ---
 
+## Farm automation feeds
+
+Witness can also record a farm's automation events: sensor readings, alarms, setting changes (with who made them), door access and health records, from any system that writes one JSON object per line. A source that stops reporting raises a `farm_source_silent` warning. The feed survives witness restarts like every other. See [docs/farm-events.md](docs/farm-events.md).
+
 ## Works with any AI agent
 
 Witness is LLM-agnostic. It routes agent traffic through [Pipelock](https://github.com/luckyPipewrench/pipelock) — a transparent auditing proxy — and logs every request as a signed Merkle leaf. Any agent that honours standard HTTP proxy environment variables works out of the box.

@@ -37,6 +37,7 @@ import (
 	"github.com/bigblue-r4/kiss-protocol/internal/death"
 	"github.com/bigblue-r4/kiss-protocol/internal/drift"
 	"github.com/bigblue-r4/kiss-protocol/internal/encrypt"
+	"github.com/bigblue-r4/kiss-protocol/internal/farm"
 	"github.com/bigblue-r4/kiss-protocol/internal/genesis"
 	"github.com/bigblue-r4/kiss-protocol/internal/machid"
 	"github.com/bigblue-r4/kiss-protocol/internal/migrate"
@@ -356,11 +357,24 @@ func cmdStart() {
 		sbhBridges = append(sbhBridges, br)
 		fmt.Printf("[witness] SBH %s tailing → %s\n", b.label, b.path)
 	}
-	stopSBH := func() {
+	// ── Farm automation feed + silent-source monitor ──────────────────────
+	var farmBridge *farm.Bridge
+	if cfg.FarmEventsPath != "" {
+		farmBridge = farm.New(cfg.FarmEventsPath, s, cfg.FarmSilence())
+		farmBridge.ResumeFrom(filepath.Join(cfg.PrimaryDir, "tail-state", "farm_events.json"))
+		farmBridge.Start()
+		fmt.Printf("[witness] Farm events tailing → %s (silence alarm after %s)\n",
+			cfg.FarmEventsPath, cfg.FarmSilence())
+	}
+	stopFeeds := func() {
 		for _, br := range sbhBridges {
 			br.Stop()
 		}
 		sbhBridges = nil
+		if farmBridge != nil {
+			farmBridge.Stop()
+			farmBridge = nil
+		}
 	}
 
 	// ── Anomaly detector ──────────────────────────────────────────────────
@@ -378,6 +392,7 @@ func cmdStart() {
 		"genesis_hash": snap.Hash,
 		"pipelock":     plCfg.AuditLogPath(),
 		"sbh_enabled":  len(sbhBridges) > 0,
+		"farm_enabled": farmBridge != nil,
 	})
 
 	fmt.Printf("[witness] Daemon started (PID %d)\n", os.Getpid())
@@ -405,7 +420,7 @@ func cmdStart() {
 	fireDeath := func(reason, detail string) {
 		fmt.Printf("[witness] Death trigger: %s — writing snapshot…\n", reason)
 		_ = s.Append("DEATH", reason, "witness", map[string]string{"detail": detail})
-		stopSBH()
+		stopFeeds()
 		bridge.Stop()
 		adet.Stop()
 		_ = s.Close()
