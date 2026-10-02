@@ -21,6 +21,11 @@ type Config struct {
 	// When set (or overridden by SBH_AUDIT_PATH env var), witness tails the log
 	// and records every forge run in the encrypted Merkle witness store.
 	SBHAuditPath string `json:"sbh_audit_path,omitempty"`
+	// SBHDecisionLogPath is split-brain-harness's per-decision log (SBH_DECISION_LOG):
+	// one line per request `sbh serve` analysed. Witness records every verdict.
+	SBHDecisionLogPath string `json:"sbh_decision_log_path,omitempty"`
+	// SBHSessionLogPath is split-brain-harness's session escalation log (SBH_SESSION_LOG).
+	SBHSessionLogPath string `json:"sbh_session_log_path,omitempty"`
 }
 
 // DefaultConfig returns a config with sensible defaults.
@@ -48,6 +53,12 @@ func Load(path string) (*Config, error) {
 	// Allow SBH audit path override via environment
 	if p := os.Getenv("SBH_AUDIT_PATH"); p != "" {
 		cfg.SBHAuditPath = p
+	}
+	if p := os.Getenv("SBH_DECISION_LOG"); p != "" {
+		cfg.SBHDecisionLogPath = p
+	}
+	if p := os.Getenv("SBH_SESSION_LOG"); p != "" {
+		cfg.SBHSessionLogPath = p
 	}
 	return cfg, nil
 }

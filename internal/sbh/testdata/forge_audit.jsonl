@@ -1,0 +1,2 @@
+{"timestamp":"2026-10-02T21:00:00Z","capability":"parse ammonia sensor csv","signature":"sig-parse-csv","attempt_count":1,"tier_before":"untrusted","tier_after":"probation","succeeded":true,"source_fingerprint":"a1b2c3d4e5f60718"}
+{"timestamp":"2026-10-02T21:05:00Z","capability":"write controller setpoint","signature":"sig-setpoint","attempt_count":3,"tier_before":"untrusted","tier_after":"untrusted","succeeded":false,"error_summary":"sandbox denied network access"}
