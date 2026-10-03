@@ -4,7 +4,7 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 
 ---
 
-## [Unreleased]
+## [3.3.1] — 2026-10-02
 
 ### Security
 - **A truncated log verified cleanly if the signed head file was deleted too.** `verifyTreeHead` treated a missing `tree-head.json` as a fresh store, so cutting the end off `witness.log` and removing the head passed both `store.Open` and `witness verify`. A log with entries and no head is now reported as tampering (`ErrMissingTreeHead`); an empty store still opens. No log in this format has ever existed without a head (heads arrived with the Merkle log itself, 2026-05-24), so there is nothing to migrate. Remaining limit, unchanged: the head is signed on the same machine, so someone with full control of it can rewrite and re-sign — the transparency mirror (`witness audit`) catches that.
