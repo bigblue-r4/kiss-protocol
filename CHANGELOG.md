@@ -4,7 +4,7 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 
 ---
 
-## [Unreleased]
+## [3.3.0] — 2026-10-02
 
 ### Fixed
 - **Events written while the witness was down were never recorded.** The NDJSON tailer seeked to the end of an existing file on every start, so a witness restart silently dropped everything a feed logged in the meantime — a gap in the record nobody could see. Tailers now save their read position under `<primary>/tail-state/` and resume from it (Pipelock audit log, and all three split-brain-harness logs). The position advances only past entries the store accepted, so a crash re-reads rather than skips: delivery is at-least-once, and a repeated entry is visible where a missing one would not be.
@@ -15,7 +15,7 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 ### Added
 - **Farm automation feed and a "silent house" alarm** (`internal/farm`, docs/farm-events.md). Point `farm_events_path` (or `FARM_EVENTS_PATH`) at an NDJSON feed of readings, alarms, setting changes, door access and health records, and each event is recorded in the Merkle log as source `farm`: alarms as WARN `farm_alarm:<alarm>`, setting changes with who made them, unknown kinds still recorded as `farm_event`. Every source that has reported is watched: quiet longer than `farm_silence_minutes` (default 10) gives one WARN `farm_source_silent`, and `farm_source_resumed` when it reports again. Silence is measured from each event's own timestamp, so events caught up after a restart cannot mask an outage. The feed resumes across witness restarts like the others. It detects and records; it does not control anything.
 - **Every split-brain-harness verdict is now witnessed, not only forge runs.** The SBH bridge tailed only `SBH_AUDIT_PATH`, the forge (tool-generation) log, so the harness's actual decisions never reached the Merkle log. Two more SBH logs are now tailed into it as source `sbh`:
-  - `SBH_DECISION_LOG` (split-brain-harness ≥ the release after 1.5.1): one line per request `sbh serve` analysed. Event `sbh_decision:stop_and_ask` or `sbh_decision:pass`; WARN when the gate stopped, the risk was high, or the turn escalated.
+  - `SBH_DECISION_LOG` (split-brain-harness ≥ 1.6.0): one line per request `sbh serve` analysed. Event `sbh_decision:stop_and_ask` or `sbh_decision:pass`; WARN when the gate stopped, the risk was high, or the turn escalated.
   - `SBH_SESSION_LOG`: multi-turn slow-boil escalations, as WARN `sbh_escalation`.
   Configure with `sbh_decision_log_path` / `sbh_session_log_path` in config.json or the SBH env vars. No SBH log carries raw input, so neither does the witness record.
 
