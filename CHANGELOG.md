@@ -4,6 +4,17 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **The silent-source alarm flagged event-driven sources.** A door reader or the records office reports only when something happens, so after the threshold it was wrongly flagged as silent. A farm source is now watched only once it sends a `heartbeat` or a `reading` (the kinds that arrive on a schedule); any report from a watched source counts as a sign of life.
+
+### Added
+- **Poultry house demo** (`examples/poultry-demo`): a self-contained 30-second run of the witness against a simulated poultry operation — normal logging, a witness outage and catch-up, a house controller going quiet, and three tampering attempts that verification catches. It also prints the limits, including that deleting the signed head file can hide a truncation from the local check (the transparency mirror closes it).
+- `farm.Bridge.SetCheckEvery` to change how often silence is checked.
+
+---
+
 ## [3.3.0] — 2026-10-02
 
 ### Fixed
