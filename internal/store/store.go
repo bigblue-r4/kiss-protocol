@@ -49,6 +49,11 @@ type Entry struct {
 	Data      json.RawMessage `json:"data,omitempty"`
 }
 
+// ErrMissingTreeHead reports a log that has entries but no tree-head.json. The
+// head is what makes a truncated or edited log detectable, so its absence is
+// treated as tampering, not as a fresh store.
+var ErrMissingTreeHead = errors.New("tree head missing for a non-empty log: the head file was removed (log may have been truncated)")
+
 // TreeHead is the Merkle log head stored at tree-head.json.
 type TreeHead struct {
 	Size      uint64 `json:"size"`
@@ -340,7 +345,14 @@ func verifyTreeHead(dir string, key []byte, s signer.Signer, leaves [][32]byte) 
 	data, err := os.ReadFile(filepath.Join(dir, treeHeadFilename))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil // no tree head yet; created on first Append
+			if len(leaves) == 0 {
+				return nil // a new, empty store: the head is created on first Append
+			}
+			// Every log in this format has had a head since the Merkle log was
+			// introduced, and Append writes it with every entry. A log with entries
+			// and no head means the head was removed — which, without this check,
+			// also let a truncated log verify cleanly.
+			return ErrMissingTreeHead
 		}
 		return err
 	}

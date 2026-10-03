@@ -6,11 +6,14 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 
 ## [Unreleased]
 
+### Security
+- **A truncated log verified cleanly if the signed head file was deleted too.** `verifyTreeHead` treated a missing `tree-head.json` as a fresh store, so cutting the end off `witness.log` and removing the head passed both `store.Open` and `witness verify`. A log with entries and no head is now reported as tampering (`ErrMissingTreeHead`); an empty store still opens. No log in this format has ever existed without a head (heads arrived with the Merkle log itself, 2026-05-24), so there is nothing to migrate. Remaining limit, unchanged: the head is signed on the same machine, so someone with full control of it can rewrite and re-sign — the transparency mirror (`witness audit`) catches that.
+
 ### Fixed
 - **The silent-source alarm flagged event-driven sources.** A door reader or the records office reports only when something happens, so after the threshold it was wrongly flagged as silent. A farm source is now watched only once it sends a `heartbeat` or a `reading` (the kinds that arrive on a schedule); any report from a watched source counts as a sign of life.
 
 ### Added
-- **Poultry house demo** (`examples/poultry-demo`): a self-contained 30-second run of the witness against a simulated poultry operation — normal logging, a witness outage and catch-up, a house controller going quiet, and three tampering attempts that verification catches. It also prints the limits, including that deleting the signed head file can hide a truncation from the local check (the transparency mirror closes it).
+- **Poultry house demo** (`examples/poultry-demo`): a self-contained 30-second run of the witness against a simulated poultry operation — normal logging, a witness outage and catch-up, a house controller going quiet, and three tampering attempts that verification catches. It also prints its limits. Its fourth tampering attempt (cut the log and delete the signed head) is caught since the fix above.
 - `farm.Bridge.SetCheckEvery` to change how often silence is checked.
 
 ---

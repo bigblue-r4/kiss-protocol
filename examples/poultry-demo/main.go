@@ -126,9 +126,9 @@ func main() {
 		out[i][len(out[i])/2] ^= 0x01
 		return out
 	})
-	tamper("Cut off the end of the log (hide the silence warning)", func(recs [][]byte) [][]byte {
-		return recs[:indexOf(entries, "farm_source_silent")]
-	})
+	cutEnd := func(recs [][]byte) [][]byte { return recs[:indexOf(entries, "farm_source_silent")] }
+	tamper("Cut off the end of the log (hide the silence warning)", cutEnd)
+	tamperNoHead("…and also delete the signed head file", cutEnd)
 
 	title("What this shows, and what it doesn't")
 	say("✓ Every event is recorded, including ones logged while the witness was down.")
@@ -136,8 +136,8 @@ func main() {
 	say("✓ Deleting, altering or cutting off entries is detected.")
 	say("✗ It detects and records. It controls nothing and cannot keep a house running.")
 	say("✗ The record is signed on the farm computer. Someone with full control of that computer")
-	say("  who also deletes the signed head file can hide a cut-off log from the local check.")
-	say("  Keeping a copy of the head elsewhere (the transparency mirror, `witness audit`) closes that.")
+	say("  could rewrite the log and re-sign it, because the key lives there too. A copy of the")
+	say("  signed head kept elsewhere (the transparency mirror, `witness audit`) catches that.")
 }
 
 // ── witness lifecycle ─────────────────────────────────────────────────────
@@ -211,12 +211,20 @@ func verify(dir string) string {
 	return fmt.Sprintf("OK (%d entries verified)", n)
 }
 
-func tamper(label string, edit func([][]byte) [][]byte) {
+func tamper(label string, edit func([][]byte) [][]byte) { tamperCopy(label, edit, true) }
+
+// tamperNoHead is the same attack plus removing tree-head.json, the file that
+// records how long the log should be.
+func tamperNoHead(label string, edit func([][]byte) [][]byte) { tamperCopy(label, edit, false) }
+
+func tamperCopy(label string, edit func([][]byte) [][]byte, keepHead bool) {
 	dir, err := os.MkdirTemp(workDir, "tampered-")
 	check(err)
-	head, err := os.ReadFile(filepath.Join(storeDir, "tree-head.json"))
-	check(err)
-	check(os.WriteFile(filepath.Join(dir, "tree-head.json"), head, 0600))
+	if keepHead {
+		head, err := os.ReadFile(filepath.Join(storeDir, "tree-head.json"))
+		check(err)
+		check(os.WriteFile(filepath.Join(dir, "tree-head.json"), head, 0600))
+	}
 	recs := readRecords(filepath.Join(storeDir, "witness.log"))
 	writeRecords(filepath.Join(dir, "witness.log"), edit(recs))
 	say("Attempt: %-55s → %s", label, verify(dir))
@@ -319,6 +327,8 @@ func short(err error) string {
 		return "the log is shorter than its signed head says"
 	case strings.Contains(s, "root mismatch"):
 		return "the entries no longer match the signed head"
+	case strings.Contains(s, "tree head missing"):
+		return "the signed head is gone but the log has entries"
 	}
 	return s
 }

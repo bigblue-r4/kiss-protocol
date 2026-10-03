@@ -21,14 +21,15 @@ go run ./examples/poultry-demo -keep     # keep the files to inspect
    (6 seconds in the demo; 10 minutes by default), the record flags House 3 once, then notes when it
    is back. The door reader and records office, which only report when something happens, are
    never flagged.
-4. **Someone tries to rewrite the record.** Three attempts on copies of the log: deleting the
-   ventilation-cut entry, changing one byte of an alarm, and cutting off the end of the log. Each
-   fails verification, the same check `witness verify` runs.
+4. **Someone tries to rewrite the record.** Four attempts on copies of the log: deleting the
+   ventilation-cut entry, changing one byte of an alarm, cutting off the end of the log, and cutting
+   off the end *and* deleting the signed head file. Each fails verification, the same check
+   `witness verify` runs.
 
 ## Honest limits (the demo prints these too)
 
 - It **detects and records**. It controls nothing and cannot keep a house running.
-- The record is signed on the farm computer. Someone with full control of that computer who also
-  deletes the signed head file (`tree-head.json`) can hide a cut-off log from the local check.
-  Keeping a copy of the head elsewhere (the transparency mirror, `witness audit`) closes that.
+- The record is signed on the farm computer. Someone with full control of that computer could
+  rewrite the log and re-sign it, because the key lives there too. A copy of the signed head kept
+  elsewhere (the transparency mirror, `witness audit`) catches that.
 - The demo uses a fixed key; the real witness derives its key from the machine ID.
