@@ -14,9 +14,11 @@ script, a door-access system, a spreadsheet importer. Point the witness at the f
   disagrees with a copy held elsewhere.
 - **Nothing lost to a witness restart.** The read position is saved, so events written while the
   witness was stopped are recorded when it starts again, and the log says how much it caught up.
-- **A "silent house" alarm.** Every source that has reported before is watched. If one goes quiet
-  for longer than `farm_silence_minutes` (default 10), the log records one warning,
-  `farm_source_silent`, and `farm_source_resumed` when it reports again.
+- **A "silent house" alarm.** A source is watched once it sends a `heartbeat` or a `reading`, the
+  kinds that arrive on a schedule. If a watched source goes quiet for longer than
+  `farm_silence_minutes` (default 10), the log records one warning, `farm_source_silent`, and
+  `farm_source_resumed` when it reports again. Sources that only report when something happens (a
+  door reader, the records office) are recorded but never flagged for being quiet.
 
 **What it is not:** it detects and records. It does not control anything and cannot keep
 ventilation or feeding running. That stays with the house controllers and their own backups.
@@ -40,7 +42,7 @@ Every field is stored exactly as sent; the kinds only decide how an entry is lab
 | `setting_change` | `setting`, `from`, `to`, `by` | INFO `farm_setting_change:<setting>` |
 | `access` | `door`, `person`, `direction` | INFO `farm_access:<door>` |
 | `health` | `record` (e.g. `vaccination`), `flock`, `product`, `by` | INFO `farm_health:<record>` |
-| `heartbeat` | — | INFO `farm_heartbeat` (keeps a quiet-but-healthy source from being flagged) |
+| `heartbeat` | — | INFO `farm_heartbeat` (marks the source as watched, and keeps a quiet-but-healthy one from being flagged) |
 
 ## Examples
 

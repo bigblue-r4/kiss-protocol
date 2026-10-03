@@ -202,14 +202,14 @@ func TestMonitorUsesTheEventsOwnTime(t *testing.T) {
 	m := NewMonitor(10 * time.Minute)
 	t0 := time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)
 	// Caught up after a restart: an hour-old event arriving now must not count as "just seen".
-	m.Seen("house-1", t0)
+	m.Seen("house-1", "heartbeat", t0)
 	if got := m.Check(t0.Add(time.Hour)); len(got) != 1 || got[0].Data["source"] != "house-1" {
 		t.Fatalf("Check = %v, want house-1 silent", got)
 	}
 	if got := m.Check(t0.Add(2 * time.Hour)); len(got) != 0 {
 		t.Fatalf("flagged twice: %v", got)
 	}
-	if tr := m.Seen("house-1", t0.Add(2*time.Hour)); tr == nil || tr.Event != "farm_source_resumed" {
+	if tr := m.Seen("house-1", "reading", t0.Add(2*time.Hour)); tr == nil || tr.Event != "farm_source_resumed" {
 		t.Fatalf("Seen after silence = %v, want resumed", tr)
 	}
 	if got := m.Check(t0.Add(2*time.Hour + time.Minute)); len(got) != 0 {
@@ -239,5 +239,25 @@ func TestFixtureIsTheDocumentedExamples(t *testing.T) {
 	}
 	if string(m[1]) != string(data) {
 		t.Fatal("testdata/farm_events.jsonl no longer matches the documented examples; regenerate it from the doc")
+	}
+}
+
+// A door reader or the records office reports only when something happens; being
+// quiet is normal for them, so they must never be flagged.
+func TestEventDrivenSourcesAreNeverFlaggedSilent(t *testing.T) {
+	m := NewMonitor(time.Minute)
+	t0 := time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC)
+	m.Seen("house-3/entry-door", "access", t0)
+	m.Seen("office/records", "health", t0)
+	m.Seen("house-3/controller", "alarm", t0) // alarm alone doesn't make it periodic either
+	if got := m.Check(t0.Add(24 * time.Hour)); len(got) != 0 {
+		t.Fatalf("event-driven sources flagged: %v", got)
+	}
+	// Once a source shows it reports on a schedule, it is watched, and any report counts.
+	m.Seen("house-3/controller", "reading", t0)
+	m.Seen("house-3/controller", "alarm", t0.Add(30*time.Second))
+	got := m.Check(t0.Add(2 * time.Minute))
+	if len(got) != 1 || got[0].Data["source"] != "house-3/controller" {
+		t.Fatalf("Check = %v, want only house-3/controller", got)
 	}
 }

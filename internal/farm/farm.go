@@ -7,10 +7,13 @@
 // (as farm_event), never dropped. Entries are stored as source "farm" with the
 // original event as the payload.
 //
-// The silence monitor is the "frozen house" check: a source that has reported
-// before and then goes quiet for longer than the threshold gets one WARN
-// farm_source_silent, and an INFO farm_source_resumed when it reports again.
-// It detects and records; it cannot keep the house running.
+// The silence monitor is the "frozen house" check. A source is watched once it
+// sends a heartbeat or a reading: those arrive on a schedule, so their absence
+// means something. Event-driven sources (a door reader, the records office) are
+// recorded but never flagged for being quiet. A watched source quiet for longer
+// than the threshold gets one WARN farm_source_silent, and an INFO
+// farm_source_resumed when it reports again. It detects and records; it cannot
+// keep the house running.
 package farm
 
 import (
@@ -81,15 +84,24 @@ type Transition struct {
 	Data         map[string]interface{}
 }
 
-// Seen records a report from source at t. It returns a "resumed" transition if
-// the source had been flagged silent.
-func (m *Monitor) Seen(source string, t time.Time) *Transition {
+// periodic reports whether an event kind arrives on a schedule, so that a gap
+// in it means the source may have stopped.
+func periodic(kind string) bool { return kind == "heartbeat" || kind == "reading" }
+
+// Seen records a report of the given kind from source at t. A source starts
+// being watched with its first periodic report; any report from a watched source
+// counts as a sign of life. Returns a "resumed" transition if the source had been
+// flagged silent.
+func (m *Monitor) Seen(source, kind string, t time.Time) *Transition {
 	if source == "" {
 		return nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	prev, known := m.lastSeen[source]
+	if !known && !periodic(kind) {
+		return nil // event-driven source: recorded, never watched
+	}
 	if !known || t.After(prev) {
 		m.lastSeen[source] = t
 	}
@@ -153,6 +165,9 @@ func New(path string, s *store.Store, threshold time.Duration) *Bridge {
 	}
 }
 
+// SetCheckEvery changes how often silence is checked (default 30s). Call before Start.
+func (b *Bridge) SetCheckEvery(d time.Duration) { b.checkEvery = d }
+
 // ResumeFrom saves the read position so a restarted witness ingests what the
 // farm logged while it was down, and records each (re)open. Call before Start.
 func (b *Bridge) ResumeFrom(statePath string) {
@@ -203,7 +218,8 @@ func (b *Bridge) ingest(evt pipelock.AuditEvent) {
 	}
 	b.tailer.Ack()
 	src, _ := evt["source"].(string)
-	if tr := b.monitor.Seen(src, eventTime(evt, b.now())); tr != nil {
+	kind, _ := evt["kind"].(string)
+	if tr := b.monitor.Seen(src, kind, eventTime(evt, b.now())); tr != nil {
 		_ = b.store.Append(tr.Level, tr.Event, "farm", tr.Data)
 	}
 }
