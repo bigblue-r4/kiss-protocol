@@ -4,6 +4,15 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 
 ---
 
+## [Unreleased]
+
+### Security
+- **A tree head re-signed with someone else's key passed verification.** The head's ed25519 signature was checked against the `signer_key` written in the head file itself, so anyone holding the machine key (for the MAC) could rewrite the log, sign the head with a key of their own and pass `store.Open`. When the store is opened with a signer (the daemon), the head must now be signed by that signer or by a key in the trust allowlist (`store.OpenTrusting`); otherwise it is rejected with `ErrUnexpectedSigner`. The allowlist keeps key rotation working: the old key is already listed, and the daemon's first entry re-signs the head with the new one.
+- **Stripping the signature is recorded.** An unsigned head still opens (logs from before signing was configured must), but the daemon now records **WARN** `tree_head_unsigned` and signs the next head. Seen once when signing is first turned on; any other time, someone removed the signature.
+- Unchanged limit: commands that open the log without a signer (`witness verify`, `audit`, `prove`) have no key to pin to. Someone with full control of the machine can still use its own signer; the transparency mirror (`witness audit`) catches that.
+
+---
+
 ## [3.3.1] — 2026-10-02
 
 ### Security

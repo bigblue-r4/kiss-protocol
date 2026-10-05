@@ -13,6 +13,7 @@
 package store
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/binary"
 	"encoding/hex"
@@ -54,6 +55,13 @@ type Entry struct {
 // treated as tampering, not as a fresh store.
 var ErrMissingTreeHead = errors.New("tree head missing for a non-empty log: the head file was removed (log may have been truncated)")
 
+// ErrUnexpectedSigner reports a tree head signed by a key other than the
+// witness's own signer or a key the operator trusts. The signer_key the head
+// file names is attacker-writable, so when the store is opened with a signer
+// the signature must come from that signer or from the trust allowlist passed
+// to OpenTrusting (which is how a key rotation keeps opening the old head).
+var ErrUnexpectedSigner = errors.New("tree head signed by a key that is neither this witness's signer nor in the trust allowlist: the head may have been forged")
+
 // TreeHead is the Merkle log head stored at tree-head.json.
 type TreeHead struct {
 	Size      uint64 `json:"size"`
@@ -67,13 +75,18 @@ type TreeHead struct {
 
 // Store is an encrypted, append-only Merkle log.
 type Store struct {
-	mu     sync.Mutex
-	dir    string
-	key    []byte
-	s      signer.Signer // nil → BLAKE3-MAC mode (Phase 1)
-	seq    uint64
-	leaves [][32]byte
-	f      *os.File
+	mu  sync.Mutex
+	dir string
+	key []byte
+	s   signer.Signer // nil → BLAKE3-MAC mode (Phase 1)
+	// trusted: other keys whose heads are accepted when s is set (see OpenTrusting).
+	trusted []ed25519.PublicKey
+	// unsignedHead: opened with a signer, but the stored head carried no
+	// signature (see OpenedWithUnsignedHead).
+	unsignedHead bool
+	seq          uint64
+	leaves       [][32]byte
+	f            *os.File
 }
 
 // Open opens or creates the log at dir/witness.log.
@@ -82,6 +95,14 @@ type Store struct {
 // If existing entries are present it rebuilds the Merkle tree and verifies
 // the stored tree head. Returns an error if integrity fails.
 func Open(dir string, key []byte, s signer.Signer) (*Store, error) {
+	return OpenTrusting(dir, key, s, nil)
+}
+
+// OpenTrusting is Open for a store whose head may be signed by a key other
+// than s: the keys in trusted (the operator's trust allowlist). After a key
+// rotation the existing head is signed by the old key; with the old key
+// trusted it opens, and the next Append signs with s. Ignored when s is nil.
+func OpenTrusting(dir string, key []byte, s signer.Signer, trusted []ed25519.PublicKey) (*Store, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
@@ -99,7 +120,7 @@ func Open(dir string, key []byte, s signer.Signer) (*Store, error) {
 
 	// Verify stored tree head if one exists.
 	if len(leaves) > 0 {
-		if err := verifyTreeHead(dir, key, s, leaves); err != nil {
+		if err := verifyTreeHead(dir, key, s, trusted, leaves); err != nil {
 			return nil, fmt.Errorf("store: tree head integrity: %w", err)
 		}
 	}
@@ -115,7 +136,23 @@ func Open(dir string, key []byte, s signer.Signer) (*Store, error) {
 		return nil, err
 	}
 
-	return &Store{dir: dir, key: key, s: s, seq: seq, leaves: leaves, f: f}, nil
+	unsigned := false
+	if s != nil && len(leaves) > 0 {
+		if head, err := readStoredHead(dir); err == nil && head.Signature == "" {
+			unsigned = true
+		}
+	}
+
+	return &Store{dir: dir, key: key, s: s, trusted: trusted, unsignedHead: unsigned, seq: seq, leaves: leaves, f: f}, nil
+}
+
+// OpenedWithUnsignedHead reports that the store was opened with a signer but
+// the stored head had no signature. That is expected once, when signing is
+// first configured for an existing log; otherwise someone stripped the
+// signature to get around the signer check. Either way the caller should
+// record it. The next Append signs the head again.
+func (s *Store) OpenedWithUnsignedHead() bool {
+	return s.unsignedHead
 }
 
 // Append encrypts and appends a new entry to the log, then updates the tree head.
@@ -215,7 +252,7 @@ func (s *Store) VerifyIntegrity() (uint64, error) {
 	if len(leaves) == 0 {
 		return 0, nil
 	}
-	if err := verifyTreeHead(s.dir, s.key, s.s, leaves); err != nil {
+	if err := verifyTreeHead(s.dir, s.key, s.s, s.trusted, leaves); err != nil {
 		return 0, err
 	}
 	return uint64(len(leaves)), nil
@@ -339,9 +376,12 @@ func writeTreeHead(dir string, key []byte, s signer.Signer, leaves [][32]byte) e
 
 // verifyTreeHead reads tree-head.json and checks it against the given leaf set.
 // Always verifies the BLAKE3 MAC. If a Signature field is present, also verifies
-// the ed25519 signature. If s is non-nil and no sig is present, logs a warning
-// but does not fail (allows Phase 1 → Phase 2 transition without a re-init).
-func verifyTreeHead(dir string, key []byte, s signer.Signer, leaves [][32]byte) error {
+// the ed25519 signature. If s is non-nil the signature must be s's own or from
+// a key in trusted: the signer_key in the file is attacker-writable, so it is
+// only taken at its word when no signer is available to pin to. If s is
+// non-nil and no sig is present, it does not fail (allows Phase 1 → Phase 2
+// transition without a re-init); Open reports it through OpenedWithUnsignedHead.
+func verifyTreeHead(dir string, key []byte, s signer.Signer, trusted []ed25519.PublicKey, leaves [][32]byte) error {
 	data, err := os.ReadFile(filepath.Join(dir, treeHeadFilename))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -395,6 +435,10 @@ func verifyTreeHead(dir string, key []byte, s signer.Signer, leaves [][32]byte) 
 		if err != nil || len(pubBytes) != ed25519.PublicKeySize {
 			return errors.New("tree head: malformed signer_key")
 		}
+		if s != nil && !keyAccepted(pubBytes, s.PublicKey(), trusted) {
+			return fmt.Errorf("%w (head key %s, this witness's key %s)",
+				ErrUnexpectedSigner, head.SignerKey, hex.EncodeToString(s.PublicKey()))
+		}
 		sigInput := treeHeadSigInput(uint64(len(leaves)), root)
 		if !ed25519.Verify(ed25519.PublicKey(pubBytes), sigInput, rawSig) {
 			return errors.New("tree head signature verification failed")
@@ -402,6 +446,20 @@ func verifyTreeHead(dir string, key []byte, s signer.Signer, leaves [][32]byte) 
 	}
 
 	return nil
+}
+
+// keyAccepted reports whether a head signed by pub may be trusted: it is the
+// witness's own key or one the operator listed.
+func keyAccepted(pub, own []byte, trusted []ed25519.PublicKey) bool {
+	if bytes.Equal(pub, own) {
+		return true
+	}
+	for _, k := range trusted {
+		if bytes.Equal(pub, k) {
+			return true
+		}
+	}
+	return false
 }
 
 // treeHeadSigInput returns the byte slice that is signed/verified for a tree head.

@@ -22,7 +22,10 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -307,9 +310,29 @@ func cmdStart() {
 		fatal("CRITICAL: genesis integrity check failed — possible tampering detected")
 	}
 
-	s, err := store.Open(cfg.PrimaryDir, key, signerInst)
+	// Heads signed by a key in the trust allowlist are accepted too, so a key
+	// rotation keeps opening the head the previous key signed.
+	var trustedKeys []ed25519.PublicKey
+	if list, err := soul.LoadAllowlist(soul.AllowlistPath()); err == nil {
+		for _, e := range list {
+			trustedKeys = append(trustedKeys, e.PubKey)
+		}
+	}
+	s, err := store.OpenTrusting(cfg.PrimaryDir, key, signerInst, trustedKeys)
+	if errors.Is(err, store.ErrUnexpectedSigner) {
+		fatal("open store: %v\n\nIf you rotated the signing key, add the previous public key (the head key above)\n"+
+			"to %s as a line '<label> <hex-key>' and start again.", err, soul.AllowlistPath())
+	}
 	if err != nil {
 		fatal("open store: %v", err)
+	}
+	if s.OpenedWithUnsignedHead() {
+		// Once when signing is first configured; any other time the head's
+		// signature was stripped. Recorded either way; the next head is signed.
+		warn("tree head was unsigned — recorded as tree_head_unsigned; heads are signed from now on")
+		_ = s.Append("WARN", "tree_head_unsigned", "witness", map[string]interface{}{
+			"signer_key": hex.EncodeToString(signerInst.PublicKey()),
+		})
 	}
 
 	broadcaster := death.New(cfg.PrimaryDir, mid)
