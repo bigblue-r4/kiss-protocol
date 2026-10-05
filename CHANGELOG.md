@@ -4,7 +4,7 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 
 ---
 
-## [Unreleased]
+## [3.3.2] — 2026-10-05
 
 ### Security
 - **A tree head re-signed with someone else's key passed verification.** The head's ed25519 signature was checked against the `signer_key` written in the head file itself, so anyone holding the machine key (for the MAC) could rewrite the log, sign the head with a key of their own and pass `store.Open`. When the store is opened with a signer (the daemon), the head must now be signed by that signer or by a key in the trust allowlist (`store.OpenTrusting`); otherwise it is rejected with `ErrUnexpectedSigner`. The allowlist keeps key rotation working: the old key is already listed, and the daemon's first entry re-signs the head with the new one.
