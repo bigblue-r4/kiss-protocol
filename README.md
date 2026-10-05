@@ -11,6 +11,8 @@ Tamper-evident machine-state logging for AI agent environments. Witness takes a 
 
 A compromised enforcer cannot falsify the core witness record.
 
+**[Try it in your browser →](https://bigblue-r4.github.io/sgail-playground/witness/#full)** Try to change a poultry house's log and see what the witness catches, including a cover-up with the machine's own keys that only the mirror detects. Nothing to install.
+
 [![CI](https://github.com/bigblue-r4/kiss-protocol/actions/workflows/ci.yml/badge.svg)](https://github.com/bigblue-r4/kiss-protocol/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/bigblue-r4/kiss-protocol)](https://github.com/bigblue-r4/kiss-protocol/releases)
 [![Go](https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go&logoColor=white)](go.mod)
