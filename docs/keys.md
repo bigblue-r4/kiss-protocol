@@ -11,7 +11,12 @@ Witness signs Merkle tree heads with ed25519. Two modes are supported:
 
 The BLAKE3-keyed MAC over the tree head is always present regardless of mode.
 The ed25519 signature is written into `tree-head.json` alongside the MAC and
-is verified on every `Open`.
+is verified on every `Open`. When the daemon opens the log it requires the
+signature to come from its own signer or from a key in the trust allowlist; the
+`signer_key` written in the head file is not taken at its word, because anyone
+who can rewrite the log can rewrite that field too. Commands that open the log
+without a signer (`witness verify`, `witness audit`, `witness prove`) have no
+key to pin to and check the MAC and the signature as written.
 
 ---
 
@@ -26,8 +31,11 @@ banner every startup when `--dev` is active.
 
 ### Rotation
 
-Delete the key file and restart with `--dev`. A new key is generated and the
-next `Append` re-signs the tree head with the new key. Previously written tree
+Add the current public key to the trust allowlist if it isn't there already
+(`witness soul sign` adds it), then delete the key file and restart with
+`--dev`. A new key is generated and the next `Append` re-signs the tree head
+with the new key. Without the old key in the allowlist the daemon refuses to
+open the log and prints the line to add. Previously written tree
 heads remain valid (they embed their own public key).
 
 ---
@@ -70,7 +78,9 @@ ykman piv access change-pin
 1. Generate a new key on the replacement YubiKey (or a new slot).
 2. Add the new public key to the allowlist on all verifying machines.
 3. Restart `witness` — the next `Append` writes a tree head signed by the new key.
-4. Old tree heads remain self-verifiable; they embed their own `signer_key`.
+4. The current head is still signed by the old key; the daemon accepts it
+   because the old key is in the allowlist, and its first entry re-signs the
+   head with the new key.
 5. Remove the old entry from the allowlist once you are confident no rollback is needed.
 
 ---
@@ -87,9 +97,10 @@ prod-piv  4a3b...
 backup    9f1c...
 ```
 
-The allowlist is used by `witness soul verify` and by `checkSoulSignature` at
-daemon start. It is **not** used by tree head verification — tree heads are
-self-describing (they embed the signer's public key).
+The allowlist is used by `witness soul verify`, by `checkSoulSignature` at
+daemon start, and by the daemon when it opens the log: a tree head signed by a
+key that is neither the daemon's signer nor in the allowlist is rejected
+(`ErrUnexpectedSigner`).
 
 ### Bootstrap
 
