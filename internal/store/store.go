@@ -84,6 +84,7 @@ type Store struct {
 	// unsignedHead: opened with a signer, but the stored head carried no
 	// signature (see OpenedWithUnsignedHead).
 	unsignedHead bool
+	recovered    Recovery
 	seq          uint64
 	leaves       [][32]byte
 	f            *os.File
@@ -107,7 +108,8 @@ func OpenTrusting(dir string, key []byte, s signer.Signer, trusted []ed25519.Pub
 		return nil, err
 	}
 
-	entries, err := ReadAll(dir, key)
+	path := filepath.Join(dir, logFilename)
+	entries, ends, frames, size, err := readLog(path, key)
 	if err != nil {
 		return nil, fmt.Errorf("store: read existing log: %w", err)
 	}
@@ -118,8 +120,47 @@ func OpenTrusting(dir string, key []byte, s signer.Signer, trusted []ed25519.Pub
 		leaves[i] = leafHash(e)
 	}
 
-	// Verify stored tree head if one exists.
+	// A crash between writing a record and writing its head leaves exactly one
+	// complete record the head does not cover yet. Verify the head against
+	// the records it does cover; the extra one is moved aside below, never
+	// signed (signing it would let anyone with the machine key get a forged
+	// record signed by restarting the witness).
+	committed := len(leaves)
 	if len(leaves) > 0 {
+		if h, err := readStoredHead(dir); err == nil && h.Size >= 1 && h.Size+1 == uint64(len(leaves)) {
+			committed = int(h.Size)
+		}
+		if err := verifyTreeHead(dir, key, s, trusted, leaves[:committed]); err != nil {
+			return nil, fmt.Errorf("store: tree head integrity: %w", err)
+		}
+	}
+
+	// Anything after the last committed record is a crash tail: a half-written
+	// record, or the one uncommitted record above. Left in place it would sit
+	// in front of every later write and make the log unreadable, so it is
+	// moved to a quarantine file (kept for inspection) and reported.
+	var cut int64
+	if committed > 0 {
+		cut = ends[committed-1]
+	}
+	// Only a true crash tail is moved: after the cut there may be the one
+	// uncommitted record and/or a partial frame, nothing else. Complete records
+	// that fail to decrypt (a wrong key, corruption) are never moved here.
+	lastGood := cut
+	if len(ends) > 0 {
+		lastGood = ends[len(ends)-1]
+	}
+	var rec Recovery
+	if size > cut && frames == lastGood {
+		q, err := quarantineTail(path, cut, size)
+		if err != nil {
+			return nil, fmt.Errorf("store: recover crash tail: %w", err)
+		}
+		rec = Recovery{Bytes: size - cut, UncommittedRecords: len(leaves) - committed, QuarantineFile: q}
+		entries, leaves = entries[:committed], leaves[:committed]
+	}
+	if committed < len(leaves) {
+		// Not a clean crash tail: the head must cover every record.
 		if err := verifyTreeHead(dir, key, s, trusted, leaves); err != nil {
 			return nil, fmt.Errorf("store: tree head integrity: %w", err)
 		}
@@ -130,7 +171,6 @@ func OpenTrusting(dir string, key []byte, s signer.Signer, trusted []ed25519.Pub
 		seq = entries[len(entries)-1].Seq
 	}
 
-	path := filepath.Join(dir, logFilename)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		return nil, err
@@ -143,7 +183,32 @@ func OpenTrusting(dir string, key []byte, s signer.Signer, trusted []ed25519.Pub
 		}
 	}
 
-	return &Store{dir: dir, key: key, s: s, trusted: trusted, unsignedHead: unsigned, seq: seq, leaves: leaves, f: f}, nil
+	return &Store{dir: dir, key: key, s: s, trusted: trusted, unsignedHead: unsigned, recovered: rec, seq: seq, leaves: leaves, f: f}, nil
+}
+
+// Recovery describes a crash tail removed from the log when it was opened.
+type Recovery struct {
+	Bytes              int64  // bytes moved out of witness.log
+	UncommittedRecords int    // complete records the head did not yet cover (0 or 1)
+	QuarantineFile     string // where the bytes were moved; never deleted
+}
+
+// Recovered reports a crash tail found and moved aside by Open (zero if none).
+// The caller should record it: the log is intact up to its signed head, and
+// the quarantined bytes are evidence of the interrupted write.
+func (s *Store) Recovered() Recovery { return s.recovered }
+
+// RootAt returns the hex Merkle root of the first size records: the root the
+// log had when it was that long. An append-only log's root at an earlier
+// published size must equal the root published then.
+func (s *Store) RootAt(size uint64) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if size > uint64(len(s.leaves)) {
+		return "", fmt.Errorf("store: size %d exceeds log size %d", size, len(s.leaves))
+	}
+	root := merkle.Root(s.leaves[:size])
+	return hex.EncodeToString(root[:]), nil
 }
 
 // OpenedWithUnsignedHead reports that the store was opened with a signer but
@@ -189,12 +254,12 @@ func (s *Store) Append(level, event, source string, data interface{}) error {
 		return err
 	}
 
-	var lenBuf [4]byte
-	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(sealed)))
-	if _, err := s.f.Write(lenBuf[:]); err != nil {
-		return err
-	}
-	if _, err := s.f.Write(sealed); err != nil {
+	// One write per record: length prefix and record together, so an
+	// interrupted write leaves at most one partial frame at the end (which
+	// Open recovers), never a length without its record.
+	frame := binary.BigEndian.AppendUint32(make([]byte, 0, 4+len(sealed)), uint32(len(sealed)))
+	frame = append(frame, sealed...)
+	if _, err := s.f.Write(frame); err != nil {
 		return err
 	}
 
@@ -286,17 +351,28 @@ func (s *Store) InclusionProof(index uint64) (merkle.Proof, Entry, error) {
 // Entries with an unrecognised prev_hash field (v1 format) are decoded
 // normally — the field is simply ignored by the v2 struct.
 func ReadAll(dir string, key []byte) ([]Entry, error) {
-	path := filepath.Join(dir, logFilename)
+	entries, _, _, _, err := readLog(filepath.Join(dir, logFilename), key)
+	return entries, err
+}
+
+// readLog is ReadAll that also reports, for each returned entry, the byte
+// offset just past its frame; frames, the offset just past the last complete
+// frame (decryptable or not); and the file size. Bytes past frames are a
+// partial (torn) write.
+func readLog(path string, key []byte) (entries []Entry, ends []int64, frames, size int64, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, nil, 0, 0, nil
 		}
-		return nil, err
+		return nil, nil, 0, 0, err
 	}
 	defer f.Close()
+	if fi, err := f.Stat(); err == nil {
+		size = fi.Size()
+	}
 
-	var entries []Entry
+	var off int64
 	for {
 		var lenBuf [4]byte
 		if _, err := io.ReadFull(f, lenBuf[:]); err != nil {
@@ -310,6 +386,7 @@ func ReadAll(dir string, key []byte) ([]Entry, error) {
 		if _, err := io.ReadFull(f, sealed); err != nil {
 			break
 		}
+		off += 4 + int64(length)
 		plain, err := encrypt.Open(sealed, key)
 		if err != nil {
 			continue
@@ -319,8 +396,29 @@ func ReadAll(dir string, key []byte) ([]Entry, error) {
 			continue
 		}
 		entries = append(entries, e)
+		ends = append(ends, off)
 	}
-	return entries, nil
+	return entries, ends, off, size, nil
+}
+
+// quarantineTail copies bytes [from, to) of the log to a new file beside it,
+// then truncates the log to from. Returns the quarantine file's path.
+func quarantineTail(path string, from, to int64) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	tail := make([]byte, to-from)
+	_, err = f.ReadAt(tail, from)
+	_ = f.Close()
+	if err != nil {
+		return "", err
+	}
+	q := fmt.Sprintf("%s.crash-tail-%d", path, time.Now().UnixNano())
+	if err := os.WriteFile(q, tail, 0600); err != nil {
+		return "", err
+	}
+	return q, os.Truncate(path, from)
 }
 
 // leafHash returns the Merkle leaf hash for an entry.

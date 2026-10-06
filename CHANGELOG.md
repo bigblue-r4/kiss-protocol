@@ -4,6 +4,17 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 
 ---
 
+## [3.3.3] — 2026-10-06
+
+### Security
+- **`witness audit` could pass a rewritten history.** When the transparency mirror was behind the local log, audit compared only sizes and reported "eventual consistency lag". Someone holding the machine's keys could change a past record, re-sign the head, append one more record, and audit would exit 0. Audit now checks that the local log, cut to the mirror's size, still has exactly the root the mirror holds, and fails (exit 1) if not. **Affected:** every release with a mirror before 3.3.3. **Action:** upgrade, then run `witness audit` once against your mirror; a failure on a log you haven't changed means its history before the mirror's head was altered. Found by the Proof-of-Control C07 self-assessment (attack class described in C7.3.5).
+- **An interrupted write could leave the log permanently unopenable.** A record's length and body were written separately, and a kill or power loss between them (or between a record and its signed head) left a partial or uncommitted record at the end. Later records then sat behind it unreadable, and the daemon refused to start with a root mismatch, so a crash looked like tampering and stopped all recording. Each record is now one write, and on open a true crash tail (a partial record and/or exactly one record the head doesn't yet cover) is moved to `witness.log.crash-tail-<time>` beside the log, never deleted and never signed. The daemon records **WARN `log_crash_tail_recovered`**, and `witness verify` prints a note. Anything else beyond the head still fails as tampering, and a refused log is never modified. **Affected:** all earlier releases. **Action:** upgrade. A log already stuck this way opens again on 3.3.3, with the stuck bytes kept in the quarantine file.
+
+### Added
+- `store.Recovered()` and `store.RootAt(size)`.
+
+---
+
 ## [3.3.2] — 2026-10-05
 
 ### Security
