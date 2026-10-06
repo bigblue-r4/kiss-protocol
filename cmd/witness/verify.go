@@ -33,6 +33,10 @@ func cmdVerify() {
 		os.Exit(1)
 	}
 	defer s.Close()
+	if r := s.Recovered(); r.Bytes > 0 {
+		fmt.Printf("NOTE  the log ended in an interrupted write: %d byte(s) (%d uncommitted record(s)) moved to %s\n",
+			r.Bytes, r.UncommittedRecords, r.QuarantineFile)
+	}
 
 	n, err := s.VerifyIntegrity()
 	if err != nil {

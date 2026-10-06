@@ -53,7 +53,7 @@ import (
 	"github.com/bigblue-r4/kiss-protocol/internal/store"
 )
 
-const version = "3.3.2"
+const version = "3.3.3"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -325,6 +325,17 @@ func cmdStart() {
 	}
 	if err != nil {
 		fatal("open store: %v", err)
+	}
+	if r := s.Recovered(); r.Bytes > 0 {
+		// A write was interrupted (crash, kill, power loss). The log is intact
+		// up to its signed head; the partial or uncommitted bytes were moved
+		// aside, not deleted. Recorded so the interruption is part of the record.
+		warn("log ended in an interrupted write — %d byte(s) moved to %s", r.Bytes, r.QuarantineFile)
+		_ = s.Append("WARN", "log_crash_tail_recovered", "witness", map[string]interface{}{
+			"bytes":               r.Bytes,
+			"uncommitted_records": r.UncommittedRecords,
+			"quarantine_file":     filepath.Base(r.QuarantineFile),
+		})
 	}
 	if s.OpenedWithUnsignedHead() {
 		// Once when signing is first configured; any other time the head's

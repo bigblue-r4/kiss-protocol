@@ -121,7 +121,20 @@ func cmdAudit() {
 		fmt.Printf("[witness] OK    leaves=%-6d root=%s\n", local.Size, local.Root)
 
 	default:
-		// Mirror is behind local. Check lag tolerance.
+		// Mirror is behind local. The log is append-only, so its root at the
+		// mirror's size must still be the root the mirror holds; otherwise
+		// history before the mirror's head was rewritten (and re-signed) and a
+		// newer record added on top. Checked before any lag tolerance.
+		prefix, err := s.RootAt(remote.Size)
+		if err != nil || prefix != remote.Root {
+			fmt.Fprintf(os.Stderr,
+				"[witness] FAIL  mirror disagrees: the local log does not extend the mirror's head\n"+
+					"               mirror size=%-6d root=%s\n"+
+					"               local root at size %d=%s\n"+
+					"               records before the mirror's head were changed\n",
+				remote.Size, remote.Root, remote.Size, prefix)
+			os.Exit(1)
+		}
 		lag := local.Size - remote.Size
 		if maxLag > 0 && lag > maxLag {
 			fmt.Fprintf(os.Stderr,
