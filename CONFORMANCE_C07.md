@@ -1,6 +1,6 @@
 # Witness self-assessment: Proof-of-Control C07 "Evidence Generation and Properties"
 
-**Assessed:** the Harborlight Witness (`cmd/witness`, `internal/store`, `internal/merkle`, `internal/mirror`) at **kiss-protocol v3.3.2** (`7f9328c`, plus README-only `2f6148b`).
+**Assessed:** the Harborlight Witness (`cmd/witness`, `internal/store`, `internal/merkle`, `internal/mirror`) at **kiss-protocol v3.3.2** (`7f9328c`), **re-run on v3.3.3** (`830e21f`, 2026-10-06), which fixes the two defects this assessment found (see "Update" below).
 **Against:** Proof-of-Control **0.1** (`0.1/en/0x10-C07-Evidence-Generation-and-Properties.md`, fetched 2026-10-06 from `LFDT-ProofOfControl/ov-poc-standard@master`). The v1.0 comment draft was not available to this assessment; version-sensitive points are flagged.
 **Assessed 2026-10-06.** Self-assessment, not third-party. No Witness production code was changed; every test is new and lives in `tests/poc_c07/`.
 
@@ -12,6 +12,19 @@
 
 ---
 
+## Update: v3.3.3 (2026-10-06)
+
+The assessment found two defects, both fixed and released in **v3.3.3** with a public security notice in the release notes:
+
+1. **`witness audit` passed a rewritten history** (rewrite + re-sign + append one record → exit 0). Audit now requires the local root at the mirror's size to equal the mirror's root (`store.RootAt`). `TestC07_7_3_5_Probe_AuditCatchesRewriteThenAppend` now **passes**.
+2. **A torn write made the log permanently unopenable.** Records are now one write, and a true crash tail is moved to a quarantine file on open. `TestC07_Crash_TornWriteDoesNotLoseLaterRecords` now **passes**.
+
+Re-run on v3.3.3: **31 tests, 17 pass, 14 fail** (all 14 are open gap probes). **No requirement changes status:**
+- 7.3.5 stays NOT MET, because the fix uses the full local log, not a consistency *proof* a third party could check.
+- 7.6.1 stays PARTIAL, because there's still no secondary failure log or alert sink.
+
+The rest of this document is the original v3.3.2 assessment, with those two rows updated.
+
 ## 1. Summary
 
 **C07 tier the Witness achieves today: T2 (Attestation) at best for the integrity mechanism, and strictly below a complete Tier 1 for the section.**
@@ -19,7 +32,7 @@
 - **Mechanism.** An assessor *with the machine key* can confirm that records weren't modified, inserted, reordered or deleted, and that the head was signed by the witness's key. That's Level 2 evidence. A third party with no privileged access can't do this, because the records are encrypted under a key derived from the machine, so Tier 3 isn't reached.
 - **Strict cumulative grading.** Levels are cumulative (`0x03` §Requirement Levels). Two Level 1 items are unmet: the claims review (7.5.2) and stated retention (7.6.5), both process or documentation work. Three more Level 1 items are partial. So C07 is not complete even at Tier 1.
 - **T3 is blocked by more than anchoring.** The known gap (no external anchor) is real, but so are three others found here:
-  1. **Consistency checking:** a re-signed history rewrite followed by one more record passes `witness audit`.
+  1. **Consistency checking:** a re-signed history rewrite followed by one more record passed `witness audit` (fixed in v3.3.3 for the operator's own audit; third parties still have no consistency proof).
   2. **Verifiability without the machine key.**
   3. **Equivocation resistance.**
 
@@ -32,7 +45,7 @@
 | AMBIGUOUS | 2 | 7.2.3, 7.2.4 |
 | **Total** | **28** | |
 
-**Test run** (`go test -tags poc_c07 -v ./tests/poc_c07/`, 2026-10-06): **31 tests, 16 pass, 15 fail.**
+**Test run on v3.3.2** (`go test -tags poc_c07 -v ./tests/poc_c07/`, 2026-10-06): **31 tests, 16 pass, 15 fail.** On v3.3.3: **17 pass, 14 fail.**
 
 - Every one of the 16 passing tests is a property the Witness claims, and none of them was downgraded.
 - 14 of the 15 failures are gap probes, written to fail while a gap is open.
@@ -61,11 +74,11 @@ The spec's own keyword for every row is "**Verify that**". C07 uses no RFC 2119 
 | 7.3.2 | Verify that | Signed by mechanism-held keys the operator and agent can't access | 3 | PARTIAL | Signature pinned to the witness key since v3.3.2 (`store.go:453`): `TestC07_7_3_2_HeadSignedByAnotherKeyIsRejected` ✅. But the MAC/encryption key = HKDF(world-readable `/etc/machine-id`) (`internal/encrypt/encrypt.go:23`, `internal/machid/machid.go:15`): `Probe_MACKeyInputIsNotSecret` ❌. Published verifiers open with no signer (`cmd/witness/verify.go:30`, `prove.go:41`, `audit.go:69`) and accept any signing key: `Probe_PublishedVerifierPinsTheSigner` ❌. Dev key lives in the operator's home | Blocks T3 | M: pin a published public key in verify/audit/prove (additive flag). Separate signing custody from the operator (PIV with a non-operator PIN, or a TEE). Don't derive the MAC key from a public identifier (touches existing code) |
 | 7.3.3 | Verify that | Equivocation resistance (gossip, witness quorum, or ledger), named | 3 | NOT MET | Gossip carries heartbeats only, no roots (`internal/gossip/heartbeat.go:51`). The mirror is one operator-controlled copy (`internal/mirror/mirror.go`) | Blocks T3 | M, additive: put signed tree heads in the gossip payload and cross-check, or anchor to a single-history log (§4) |
 | 7.3.4 | Verify that | Single-record inclusion proof against a published root; proof, size and root obtainable | 3 | PARTIAL | Structure holds: `internal/merkle/proof.go:13`. `TestC07_7_3_4_InclusionProofVerifiesWithIndependentTooling` ✅ (verified with RFC 9162 code written independently of the Witness). `TestC07_7_3_4_ProofSizeIsLogarithmic` ✅ (≤ ⌈log₂ n⌉ up to n = 4096). **Not obtainable by a third party:** proofs come only from `witness prove` with the machine key (`prove.go:41`), records are encrypted, the mirror publishes the head only: `TestC07_T3_Probe_ThirdPartyRecomputesRootWithoutMachineKey` ❌ (reads 0 of 5) | Blocks T3 | M: publish proofs plus the disclosed leaf (or leaf hash) per record through a verifier-facing endpoint. Additive |
-| 7.3.5 | Verify that | Append-only consistency vs earlier roots; compare to the anchored root, not a count | 3 | NOT MET | No consistency proof exists (`internal/merkle/` has inclusion only). `witness audit` compares roots only at equal size; when the mirror is behind it compares sizes only (`cmd/witness/audit.go:123`–`134`). **Attack A9 succeeds:** rewrite + re-sign + append 1 → audit exit 0, "eventual consistency lag": `TestC07_7_3_5_Probe_AuditCatchesRewriteThenAppend` ❌. Also `Probe_LocalVerifierRejectsReSignedRewrite` ❌ and `Probe_LocalVerifierRejectsRollback` ❌. Mitigations that do work: `TestC07_7_6_6_MirrorCatchesTruncateAndReSign` ✅, `TestC07_7_6_6_MirrorCatchesSameSizeRewrite` ✅ | **Blocks T3**, contradicts `docs/threat-model.md:51` (A1/A2 guarantee) | M, additive: RFC 6962 consistency proofs in `merkle`. Audit requires `ConsistencyProof(mirror.size → local.size)` whenever sizes differ |
+| 7.3.5 | Verify that | Append-only consistency vs earlier roots; compare to the anchored root, not a count | 3 | NOT MET | No consistency proof exists (`internal/merkle/` has inclusion only). `witness audit` compares roots only at equal size; when the mirror is behind it compares sizes only (`cmd/witness/audit.go:123`–`134`). **Attack A9 succeeded on v3.3.2:** rewrite + re-sign + append 1 → audit exit 0, "eventual consistency lag". **Fixed in v3.3.3:** audit checks `store.RootAt(mirror.size)` (`cmd/witness/audit.go`, default branch), and `TestC07_7_3_5_Probe_AuditCatchesRewriteThenAppend` ✅. Still no consistency *proof* a third party can check. Also `Probe_LocalVerifierRejectsReSignedRewrite` ❌ and `Probe_LocalVerifierRejectsRollback` ❌. Mitigations that do work: `TestC07_7_6_6_MirrorCatchesTruncateAndReSign` ✅, `TestC07_7_6_6_MirrorCatchesSameSizeRewrite` ✅ | **Blocks T3**, contradicts `docs/threat-model.md:51` (A1/A2 guarantee) | M, additive: RFC 6962 consistency proofs in `merkle`. Audit requires `ConsistencyProof(mirror.size → local.size)` whenever sizes differ |
 | 7.4.1 | Verify that | Disclosure lists every party, hardware element and math assumption per mechanism | 1 | PARTIAL | `docs/threat-model.md:67` (Trust Roots), `:88` (Operational Assumptions), `:58` (Non-Goals): `TestC07_7_4_1_TrustRootsAndAssumptionsArePublished` ✅. Missing BLAKE3, AES-256-GCM, HKDF, machine-id: `Probe_MathematicalAssumptionsAreDisclosed` ❌. Not in C10.2 form | Blocks full T1 | S, docs only: a C10.2-format disclosure per mechanism |
 | 7.5.1 | Verify that | Every schema field is an execution fact | 1 | PARTIAL | Top-level fields `seq, ts, level, event, source, data` (`store.go:44`): `TestC07_7_5_1_EntrySchemaIsExecutionFactsOnly` ✅ (pins the field set). `data` is free-form source payload; `level` is a classification | Blocks full T1 | S: publish a per-source `data` schema that admits only fact fields |
 | 7.5.2 | Verify that | Claims describe execution facts only; documented legal/compliance review | 1 | NOT MET | No claims-review record exists | Blocks T1 | S, process: review README and site claims, file the sign-off |
-| 7.6.1 | Verify that | Pipeline failures alert and are written to a secondary durable log | 2 | PARTIAL | Storage probe → anomaly → death broadcast: `internal/anomaly/detector.go:67`, `:80`; `cmd/witness/main.go:464`. But 15 call sites discard `Append` errors (e.g. `main.go:445`, `internal/farm/farm.go:223`), mirror-push failure is a stderr warning only (`main.go:434`), no secondary failure log: `Probe_WriteFailureIsRecordedElsewhere` ❌. **Defect:** a torn write leaves the log unopenable and later records unreadable: `TestC07_Crash_TornWriteDoesNotLoseLaterRecords` ❌ (`store.go:194`/`197` write length and record separately; `ReadAll` stops at the first short read, `:302`–`:310`) | Blocks full T2 | M: a secondary failure log plus alert sink (additive); handle every Append error; torn-tail recovery on open (truncate a trailing partial frame, touches `store.go`) |
+| 7.6.1 | Verify that | Pipeline failures alert and are written to a secondary durable log | 2 | PARTIAL | Storage probe → anomaly → death broadcast: `internal/anomaly/detector.go:67`, `:80`; `cmd/witness/main.go:464`. But 15 call sites discard `Append` errors (e.g. `main.go:445`, `internal/farm/farm.go:223`), mirror-push failure is a stderr warning only (`main.go:434`), no secondary failure log: `Probe_WriteFailureIsRecordedElsewhere` ❌. **Defect on v3.3.2:** a torn write left the log unopenable and later records unreadable (length and record were separate writes). **Fixed in v3.3.3:** one write per record, crash tail quarantined on open (`store.Recovered`): `TestC07_Crash_TornWriteDoesNotLoseLaterRecords` ✅ | Blocks full T2 | M: a secondary failure log plus alert sink (additive); handle every Append error; torn-tail recovery on open (truncate a trailing partial frame, touches `store.go`) |
 | 7.6.2 | Verify that | Per-source monotonic sequence numbers; gap detectable from the sequence alone | 2 | PARTIAL | `store.go:163` `seq++`: `TestC07_7_6_2_SequenceIsMonotonicFromOne` ✅, `TestC07_7_6_2_DeletionLeavesADetectableGap` ✅ (survives a re-signed deletion). But the verifier never checks continuity: `Probe_PublishedVerifierFlagsSequenceGaps` ❌. Sequence is per log, not per source: `Probe_SequenceIsPerSource` ❌. Upstream suppression of one event is invisible: `TestC07_Completeness_Probe_SingleSuppressedEventIsDetectable` ❌. Silence of a periodic source is caught: `TestC07_Completeness_SilencedPeriodicSourceIsFlagged` ✅ (`farm.go:89`) | Blocks full T2 | S, additive: check seq continuity in verify. M: per-source counters, and require source-side sequence numbers in feed formats |
 | 7.6.3 | Verify that | Fail closed: gateway refuses in-scope actions while evidence can't be generated | 4 | N/A | Gateway duty. The Witness is out of the action path and cannot gate | System T4 | Gateway: refuse actions while the evidence sink is unavailable |
 | 7.6.4 | Verify that | Role-based access to the store; every read logged | 2 | PARTIAL | Owner-only files (`store.go:106` 0700, `:134` 0600): `TestC07_7_6_4_StoreFilesAreOwnerOnly` ✅. No roles, no read-access records | Blocks full T2 | M: a read API that Appends an access event; separate reader role (the enforcer user already reads) |
@@ -87,7 +100,7 @@ Effort: S = days, M = 1–3 weeks, L = more. "Additive" means new code or files 
 
 | # | Gap | Reqs | Effort | Kind |
 |---|---|---|:-:|---|
-| G1 | **No append-only consistency check.** A re-signed rewrite plus one more record passes `witness audit` (exit 0). Implement RFC 6962 consistency proofs, and make audit require one whenever sizes differ | 7.3.5, 7.6.6 | M | Additive (new `merkle` function); audit behaviour changes |
+| G1 | **No append-only consistency proof.** The operator's own `witness audit` now checks the prefix root (fixed in v3.3.3), but a third party with only published roots still can't. Implement RFC 6962 consistency proofs and publish them alongside anchored roots | 7.3.5, 7.6.6 | M | Additive (new `merkle` function) |
 | G2 | **Third parties can't verify without the machine key.** Records are encrypted and proofs come only from `witness prove` | 7.3.4, T3 | M | Additive: a verifier export of leaf data (or leaf hash plus a disclosure policy) and proofs |
 | G3 | **No anchor outside operator control**, and no equivocation resistance | 7.2.2, 7.6.6, 7.3.3 | M | Additive (§4) |
 | G4 | **Key custody.** MAC/encryption key derived from world-readable `/etc/machine-id`; published verifiers don't pin the signing key | 7.3.2 | M | Pinning is additive; key derivation touches existing code and needs a migration |
@@ -99,7 +112,7 @@ Effort: S = days, M = 1–3 weeks, L = more. "Additive" means new code or files 
 | # | Gap | Reqs | Effort | Kind |
 |---|---|---|:-:|---|
 | G7 | **No gating.** The Witness is out of the action path. T4 needs the gateway to refuse in-scope actions while the Witness can't record | 7.6.3, 7.1.3 | L | Gateway work, outside this repo |
-| G8 | **Write failures are silent and a torn write bricks the log.** Handle every Append error, add a secondary failure log and alert, and recover a torn tail on open | 7.6.1 | M | Touches `store.go` and callers |
+| G8 | **Write failures are silent.** Handle every Append error and add a secondary failure log and alert (torn-tail recovery shipped in v3.3.3) | 7.6.1 | M | Touches callers |
 
 **Below T3 (complete T1/T2 for C07)**: these are cheap.
 
