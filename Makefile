@@ -9,6 +9,8 @@ GOFLAGS   := -trimpath -ldflags="-s -w"
 # -trimpath     strips local build paths
 # -buildvcs=false  omits VCS metadata that varies between machines
 REPRO_FLAGS := -trimpath -ldflags="-s -w" -buildvcs=false
+# Static, matching the release workflow: CGO_ENABLED=0 on every platform.
+REPRO_ENV   := GOTOOLCHAIN=local CGO_ENABLED=0
 
 .PHONY: all build build-pd install install-pd clean tidy test \
         reproducible-build verify-reproducible fuzz
@@ -39,15 +41,15 @@ test:
 
 # Build with reproducibility flags and record the SHA-256.
 reproducible-build:
-	GOTOOLCHAIN=local go build $(REPRO_FLAGS) -o $(BINARY) $(CMD)
+	$(REPRO_ENV) go build $(REPRO_FLAGS) -o $(BINARY) $(CMD)
 	sha256sum $(BINARY) | tee $(BINARY).sha256
 
 # Build twice from clean and verify the hashes match.
 # A mismatch means a non-deterministic input slipped into the build.
 verify-reproducible:
-	GOTOOLCHAIN=local go build $(REPRO_FLAGS) -o $(BINARY) $(CMD)
+	$(REPRO_ENV) go build $(REPRO_FLAGS) -o $(BINARY) $(CMD)
 	sha256sum $(BINARY) > $(BINARY).sha256
-	GOTOOLCHAIN=local go build $(REPRO_FLAGS) -o $(BINARY).2 $(CMD)
+	$(REPRO_ENV) go build $(REPRO_FLAGS) -o $(BINARY).2 $(CMD)
 	@h1=$$(sha256sum $(BINARY)   | awk '{print $$1}'); \
 	 h2=$$(sha256sum $(BINARY).2 | awk '{print $$1}'); \
 	 if [ "$$h1" = "$$h2" ]; then \

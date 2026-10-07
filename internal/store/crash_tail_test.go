@@ -224,3 +224,38 @@ func mustHead(t *testing.T, dir string) TreeHead {
 	}
 	return h
 }
+
+func TestLastSurvivesReopenAndRecovery(t *testing.T) {
+	dir, s := signedStore(t, 3)
+	st, _ := Open(dir, testKey(), s)
+	if e, ok := st.Last(); !ok || e.Seq != 3 {
+		t.Fatalf("Last after open = %+v, %v; want seq 3", e, ok)
+	}
+	_ = st.Append("DEATH", "signal_received", "witness", nil)
+	if e, _ := st.Last(); e.Seq != 4 || e.Event != "signal_received" {
+		t.Fatalf("Last after append = %+v", e)
+	}
+	_ = st.Close()
+
+	// A crash tail must not count as the last record: Last is the last committed one.
+	appendRaw(t, dir, frameFor(t, Entry{Seq: 5, Timestamp: time.Now().UTC(), Event: "uncommitted", Source: "test"}))
+	st, err := Open(dir, testKey(), s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if e, ok := st.Last(); !ok || e.Seq != 4 || e.Event != "signal_received" {
+		t.Fatalf("Last after recovery = %+v, %v; want seq 4 signal_received", e, ok)
+	}
+}
+
+func TestLastOnEmptyStore(t *testing.T) {
+	st, err := Open(t.TempDir(), testKey(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, ok := st.Last(); ok {
+		t.Fatal("empty store reported a last record")
+	}
+}

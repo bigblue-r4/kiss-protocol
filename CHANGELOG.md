@@ -4,6 +4,20 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Time the witness was not running is recorded.** At start, the witness records `witness_downtime` with the gap since its last record and whether the stop was recorded. An unrecorded stop (crash, `kill -9`, power loss) is **CRITICAL** however short; a recorded stop longer than `downtime_alert_minutes` (default 10) is WARN; the first start after `witness init` is INFO.
+- **Mirror problems are recorded, not just printed.** No `mirror_url` is **CRITICAL** `mirror_not_configured` at every start (WARN in `--dev`), a mirror that won't open is `mirror_misconfigured`, and pushes record the first failure (WARN `mirror_push_failed`), the point the mirror counts as unreachable (CRITICAL `mirror_unreachable`, after `mirror_escalate_after` failures, default 3) and the recovery (INFO `mirror_push_recovered`), without repeating every failure in between.
+- The enforcer handles the new CRITICAL level (printed; alerting and agent containment will hook in there).
+- `store.Last()`; `docs/hardening-test.md`, the root-only checks for the hardened install.
+
+### Changed
+- **The hardened unit grants one capability, `CAP_DAC_READ_SEARCH`** (read any file, write none), so the unprivileged witness can still fingerprint root-only files such as `/etc/shadow` and `/etc/sudoers`. Without it they read as removed on every drift check. The witness clears the inherited (ambient) copy at start, so nothing it launches (Pipelock, `ps`, its watchdog) inherits it; if that fails it records WARN `ambient_caps_not_cleared`.
+- **Release binaries are built static (`CGO_ENABLED=0`) on every platform**, as the cross-compiled ones already were. Required for the process-wide capability clear.
+
+---
+
 ## [3.3.3] — 2026-10-06
 
 ### Security

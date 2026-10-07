@@ -22,8 +22,14 @@ RuntimeDirectoryMode=0700
 
 # ── Privilege reduction ───────────────────────────────────────────────────────
 NoNewPrivileges=true
-CapabilityBoundingSet=
-AmbientCapabilities=
+# One capability: read any file, write none. The witness fingerprints files
+# only root can read (/etc/shadow, /etc/sudoers); without this they would read
+# as removed on every drift check. It is granted as an ambient capability
+# (the only way systemd can give one to a non-root user) and the witness clears
+# the ambient set at start, so nothing it launches (Pipelock, ps, its watchdog)
+# inherits it. Writes stay confined to ReadWritePaths below.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+AmbientCapabilities=CAP_DAC_READ_SEARCH
 SecureBits=noroot noroot-locked
 
 # ── Filesystem isolation ──────────────────────────────────────────────────────

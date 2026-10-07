@@ -37,7 +37,9 @@ jobs:
             for GOARCH in amd64 arm64; do
               for BIN in witness enforcer; do
                 OUT="dist/${BIN}_${GOOS}_${GOARCH}"
-                GOOS=$GOOS GOARCH=$GOARCH GOTOOLCHAIN=local \
+                # Static on every platform: lets the witness clear inherited
+                # capabilities process-wide (internal/sandbox.DropAmbientCaps).
+                CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH GOTOOLCHAIN=local \
                   go build -trimpath -ldflags="-s -w" -buildvcs=false \
                   -o "$OUT" ./cmd/$BIN
                 sha256sum "$OUT" > "${OUT}.sha256"

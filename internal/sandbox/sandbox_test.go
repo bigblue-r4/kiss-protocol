@@ -32,9 +32,12 @@ func TestNoEffectiveCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read CapEff from /proc/self/status: %v", err)
 	}
-	if capEff != 0 {
-		t.Errorf("CapEff = 0x%016x, want 0 — process must not hold any Linux capabilities", capEff)
-		t.Log("If running under the hardened systemd unit, check that CapabilityBoundingSet= is set.")
+	// The hardened unit grants exactly one capability, CAP_DAC_READ_SEARCH
+	// (bit 2): read any file, write none. Anything else is a misconfiguration.
+	const capDACReadSearch = 1 << 2
+	if capEff&^capDACReadSearch != 0 {
+		t.Errorf("CapEff = 0x%016x, want 0 or only CAP_DAC_READ_SEARCH (0x4)", capEff)
+		t.Log("If running under the hardened systemd unit, check CapabilityBoundingSet=CAP_DAC_READ_SEARCH.")
 	}
 }
 
