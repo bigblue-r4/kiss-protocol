@@ -2,7 +2,20 @@
 
 Some protections can only be checked with root: they depend on systemd granting
 a capability and on a real `witness` system user. Run this after installing with
-`install.sh` (or the USB installer) on a disposable Linux machine.
+`sudo ./install.sh` (or the USB installer) on a disposable Linux machine.
+
+## 0. The install itself
+
+```sh
+id witness                                   # system user exists
+sudo ls -la /var/lib/witness/.witness        # owned by witness, mode 700
+sudo cat /var/lib/witness/.witness/config.json   # "signer": "software", primary_dir under /var/lib/witness
+systemctl cat witness | grep -E '^(User|AmbientCapabilities|ExecStart)'
+# User=witness, AmbientCapabilities=CAP_DAC_READ_SEARCH, ExecStart=... witness start   (no --dev)
+```
+
+Re-run the installer: it must say genesis was kept, and
+`sudo sha256sum /var/lib/witness/.witness/primary/genesis.enc` must not change.
 
 ## 1. The witness runs unprivileged, with exactly one capability
 

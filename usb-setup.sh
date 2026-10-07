@@ -5,7 +5,6 @@
 #
 #  Usage:
 #    sudo bash usb-setup.sh
-#    sudo bash usb-setup.sh --sgail https://your-server-ip:8443
 #    sudo bash usb-setup.sh --offline   (uses bundled source from USB)
 #
 #  What it does:
@@ -13,8 +12,7 @@
 #    2. Installs Pipelock
 #    3. Installs the SGAIL Labs Harborlight Firewall witness CLI
 #    4. Runs genesis init (captures clean machine state)
-#    5. Installs systemd service + desktop shortcut
-#    6. Optionally configures SGAIL remote sync
+#    5. Installs the hardened systemd service (runs as user 'witness') + desktop shortcuts
 #
 #  IMPORTANT: Step 4 must happen before any AI agent is installed.
 #  This script enforces that order.
@@ -34,13 +32,11 @@ WITNESS_SUBDIR="."
 INSTALL_BIN="/usr/local/bin"
 SYSTEMD_DIR="/etc/systemd/system"
 DESKTOP_DIR=""          # resolved later
-SGAIL_ENDPOINT=""
 OFFLINE=false
 
 # ── Parse args ────────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --sgail)   SGAIL_ENDPOINT="$2"; shift 2 ;;
         --offline) OFFLINE=true; shift ;;
         *)         echo "Unknown arg: $1" >&2; exit 1 ;;
     esac
@@ -141,6 +137,7 @@ fi
 info "Getting SGAIL Labs Harborlight Firewall source…"
 BUILD_DIR="/tmp/witness-build-$$"
 mkdir -p "$BUILD_DIR"
+trap 'rm -rf "$BUILD_DIR"' EXIT
 
 USB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -166,7 +163,6 @@ go mod tidy
 go build -trimpath -ldflags="-s -w" -o "$INSTALL_BIN/witness" ./cmd/witness/
 cd -
 info "witness installed → $INSTALL_BIN/witness"
-rm -rf "$BUILD_DIR"
 
 # ── Step 6: Genesis init ──────────────────────────────────────────────────────
 hr
@@ -178,41 +174,11 @@ echo
 hr
 echo
 
-"$INSTALL_BIN/witness" init
-
-# ── Step 7: Optional SGAIL sync config ────────────────────────────────────────
-if [[ -n "$SGAIL_ENDPOINT" ]]; then
-    info "Configuring SGAIL sync → $SGAIL_ENDPOINT"
-    "$INSTALL_BIN/witness" enable-sync \
-        --endpoint "$SGAIL_ENDPOINT" \
-        ${WITNESS_SGAIL_TOKEN:+--token "$WITNESS_SGAIL_TOKEN"}
-fi
-
-# ── Step 8: Systemd service ───────────────────────────────────────────────────
-info "Installing systemd service…"
-cat > "$SYSTEMD_DIR/witness.service" <<SERVICE
-[Unit]
-Description=SGAIL Labs Harborlight Firewall — machine-state monitor (install before AI agents)
-After=network.target
-StartLimitIntervalSec=60
-StartLimitBurst=5
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/witness start
-Restart=on-failure
-RestartSec=5s
-TimeoutStopSec=15s
-Environment=HOME=/root
-
-[Install]
-WantedBy=multi-user.target
-SERVICE
-
-systemctl daemon-reload
-systemctl enable witness.service
-info "Systemd service installed and enabled (will start on next boot)."
-info "To start now: systemctl start witness"
+# shellcheck source=packaging/witness-service.sh
+source "$WITNESS_SRC/packaging/witness-service.sh"
+witness_service_setup "$INSTALL_BIN/witness" \
+    "$WITNESS_SRC/payload/witness/default-soul.toml" \
+    "$WITNESS_SRC/packaging/systemd/witness.service"
 
 # ── Step 9: Desktop shortcut ──────────────────────────────────────────────────
 DESKTOP_DIR="$REAL_HOME/Desktop"
@@ -223,8 +189,9 @@ if [[ -d "$DESKTOP_DIR" ]]; then
 
     cat > "$DEST/▶ Start Witness.sh" <<'SH'
 #!/bin/bash
-echo "Starting SGAIL Labs Harborlight Firewall witness daemon..."
-witness start
+echo "Starting SGAIL Labs Harborlight Firewall witness service..."
+sudo systemctl start witness && systemctl --no-pager status witness | head -5
+read -r -p "Press Enter to close..."
 SH
 
     cat > "$DEST/📊 Status.sh" <<'SH'
@@ -232,7 +199,7 @@ SH
 echo "════════════════════════════════════"
 echo "  SGAIL HARBORLIGHT STATUS"
 echo "════════════════════════════════════"
-witness status
+sudo -u witness env HOME=/var/lib/witness /usr/local/bin/witness status
 echo
 echo "Press Enter to close..."
 read
@@ -240,13 +207,17 @@ SH
 
     cat > "$DEST/⏹ Stop Witness.sh" <<'SH'
 #!/bin/bash
-pkill -TERM witness 2>/dev/null && echo "Shutdown signal sent — death broadcast fired." || echo "Not running."
-sleep 1
+sudo systemctl stop witness && echo "Witness stopped (the stop is recorded in its log)." || echo "Not running."
+sleep 2
 SH
 
-    cat > "$DEST/📁 Open Config.sh" <<SH
+    cat > "$DEST/📁 Show Config.sh" <<'SH'
 #!/bin/bash
-xdg-open /home/$REAL_USER/.witness 2>/dev/null || nautilus /home/$REAL_USER/.witness 2>/dev/null || true
+# The witness's files belong to its own user; this shows the config read-only.
+echo "Config: /var/lib/witness/.witness/config.json"
+sudo cat /var/lib/witness/.witness/config.json
+echo
+read -r -p "Press Enter to close..."
 SH
 
     cat > "$DEST/README.txt" <<README
@@ -258,7 +229,7 @@ Order:
   1. Clean OS
   2. This script (witness init)
   3. Install agents (Claude, etc.)
-  4. witness start
+  4. sudo systemctl start witness
 
 Project: https://github.com/bigblue-r4/kiss-protocol
 README
@@ -279,14 +250,10 @@ echo
 echo -e "  ${YELLOW}NEXT STEPS:${NC}"
 echo    "    1. Install your AI agents (Claude Code, etc.)"
 echo    "    2. Start the witness daemon:"
-echo    "         systemctl start witness"
-echo    "         — or —"
-echo    "         witness start"
+echo    "         sudo systemctl start witness"
+echo    "    3. Set \"mirror_url\" in /var/lib/witness/.witness/config.json (see docs/mirror-setup.md);"
+echo    "       until then every start records CRITICAL mirror_not_configured."
 echo
-if [[ -n "$SGAIL_ENDPOINT" ]]; then
-echo    "    3. Remote sync configured → $SGAIL_ENDPOINT"
-fi
-echo    "  witness status   — check genesis trust level + log"
-echo    "  witness start    — start continuous monitoring"
+echo    "  sudo -u witness env HOME=/var/lib/witness witness status   — genesis trust level + log"
 echo
 hr

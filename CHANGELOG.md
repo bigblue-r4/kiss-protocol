@@ -12,6 +12,13 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 - The enforcer handles the new CRITICAL level (printed; alerting and agent containment will hook in there).
 - `store.Last()`; `docs/hardening-test.md`, the root-only checks for the hardened install.
 
+### Fixed
+- **The installers never produced a working service.** `install.sh` took the genesis snapshot as root *before* creating the `witness` user, so the hardened service (`HOME=/var/lib/witness`) found no config or genesis and exited; neither installer signed the soul, and production mode exits without a signed soul; the USB installer wrote its own unit that ran the witness **as root** with no hardening. Both installers now share `packaging/witness-service.sh`: create the `witness` user (or stop: never fall back to root), copy any existing witness into `/var/lib/witness` (the original is left in place), install the soul, write a config with `signer: software`, take genesis **only if none exists** (re-running `witness init` replaces the baseline), sign the soul, hand everything to `witness`, and install the hardened unit — or refuse; there is no weaker fallback. Tested without root in CI (`packaging/witness-service_test.sh`, root-only steps stubbed); the root checks are in `docs/hardening-test.md`.
+- **`--sgail` removed from both installers.** It called `witness enable-sync`, removed in v2.1.
+
+### Added (signing)
+- **`"signer": "software"`** in `config.json`: an on-disk ed25519 key at `~/.witness/signing.key` for installs without a YubiKey, with production checks on (unlike `--dev`) and an honest "pilot grade" notice. The installers set it up; when they see a YubiKey they say hardware signing needs the PIV build, which isn't in this release.
+
 ### Changed
 - **The hardened unit grants one capability, `CAP_DAC_READ_SEARCH`** (read any file, write none), so the unprivileged witness can still fingerprint root-only files such as `/etc/shadow` and `/etc/sudoers`. Without it they read as removed on every drift check. The witness clears the inherited (ambient) copy at start, so nothing it launches (Pipelock, `ps`, its watchdog) inherits it; if that fails it records WARN `ambient_caps_not_cleared`.
 - **Release binaries are built static (`CGO_ENABLED=0`) on every platform**, as the cross-compiled ones already were. Required for the process-wide capability clear.

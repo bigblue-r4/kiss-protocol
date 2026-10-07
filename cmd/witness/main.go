@@ -297,7 +297,7 @@ func cmdStart() {
 	// read-only capability for this process only (see packaging/systemd).
 	capsErr := sandbox.DropAmbientCaps()
 
-	signerInst := resolveSigner(devMode, witnessDir())
+	signerInst := resolveSigner(devMode, cfg.Signer, witnessDir())
 	checkSoulSignature(soul.Path(), devMode)
 
 	snapEncBytes, err := os.ReadFile(filepath.Join(cfg.PrimaryDir, "genesis.enc"))
@@ -658,9 +658,13 @@ func cmdSoul() {
 			devMode = true
 		}
 	}
+	soulCfg, err := config.Load(config.Path())
+	if err != nil {
+		fatal("load config: %v", err)
+	}
 	switch os.Args[2] {
 	case "sign":
-		s := resolveSigner(devMode, witnessDir())
+		s := resolveSigner(devMode, soulCfg.Signer, witnessDir())
 		if s == nil {
 			fatal("no signer available; use --dev or build with -tags piv")
 		}
@@ -733,13 +737,24 @@ func witnessDir() string {
 	return filepath.Join(home, ".witness")
 }
 
-func resolveSigner(devMode bool, keyDir string) signer.Signer {
+func resolveSigner(devMode bool, mode, keyDir string) signer.Signer {
 	if devMode {
 		s, err := signer.NewDev(keyDir)
 		if err != nil {
 			fatal("dev signer: %v", err)
 		}
 		return s
+	}
+	switch mode {
+	case "software":
+		s, err := signer.NewSoftware(keyDir)
+		if err != nil {
+			fatal("software signer: %v", err)
+		}
+		return s
+	case "", "piv":
+	default:
+		fatal("unknown signer %q in config (use \"software\", or leave it out for a YubiKey)", mode)
 	}
 	s, err := signer.NewPIV()
 	if err != nil {

@@ -40,6 +40,10 @@ type Config struct {
 	// MirrorEscalateAfter: consecutive failed mirror pushes before the mirror is
 	// recorded as unreachable (CRITICAL) (0 = default of 3).
 	MirrorEscalateAfter int `json:"mirror_escalate_after,omitempty"`
+	// Signer chooses the signing key outside --dev: "" (default) uses a
+	// YubiKey PIV token (needs the piv build); "software" uses an on-disk key
+	// in the witness's own folder (pilot grade; see signer.NewSoftware).
+	Signer string `json:"signer,omitempty"`
 }
 
 // DowntimeAlert is the configured clean-stop threshold, defaulting to 10 minutes.

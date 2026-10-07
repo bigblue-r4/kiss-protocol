@@ -6,8 +6,8 @@
 # Run as root or with sudo for full three-tier backup support.
 #
 # Usage:
-#   ./install.sh                        # local install
-#   ./install.sh --sgail https://...    # with SGAIL endpoint
+#   sudo ./install.sh                   # Linux: hardened service under its own user
+#   ./install.sh                        # macOS
 
 set -euo pipefail
 
@@ -34,15 +34,10 @@ WITNESS_REPO="github.com/bigblue-r4/kiss-protocol/cmd/witness"
 INSTALL_DIR="/usr/local/bin"
 SYSTEMD_DIR="/etc/systemd/system"
 
-SGAIL_ENDPOINT=""
 
 # ── Parse args ──────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --sgail)
-            SGAIL_ENDPOINT="$2"
-            shift 2
-            ;;
         *)
             echo "Unknown arg: $1" >&2
             exit 1
@@ -100,97 +95,36 @@ else
     info "witness CLI installed → $INSTALL_DIR/witness"
 fi
 
-# ── Step 3: Install soul file ────────────────────────────────────────────────
-SOUL_DST="$HOME/.witness/soul.toml"
-if [[ -f "$SOUL_DST" ]]; then
-    info "Soul file already present — skipping."
-else
-    mkdir -p "$HOME/.witness"
-    # Prefer bundled copy from repo; fall back to fetching from GitHub.
-    if [[ -f "$SCRIPT_DIR/payload/witness/default-soul.toml" ]]; then
-        cp "$SCRIPT_DIR/payload/witness/default-soul.toml" "$SOUL_DST"
-        chmod 0400 "$SOUL_DST"
-        info "Soul file installed → $SOUL_DST"
-    else
-        SOUL_URL="https://raw.githubusercontent.com/bigblue-r4/kiss-protocol/main/payload/witness/default-soul.toml"
-        info "Fetching default soul file from GitHub…"
-        curl -fsSL "$SOUL_URL" -o "$SOUL_DST" \
-            || fatal "Could not fetch soul file. Clone the repo and run install.sh from it."
-        chmod 0400 "$SOUL_DST"
-        info "Soul file installed → $SOUL_DST"
-    fi
-fi
-
-# ── Step 4: Genesis init ─────────────────────────────────────────────────────
-info "Initializing witness (genesis snapshot)…"
-"$INSTALL_DIR/witness" init
-
-# ── Step 5: Optional SGAIL configuration ─────────────────────────────────────
-if [[ -n "$SGAIL_ENDPOINT" ]]; then
-    info "Configuring SGAIL sync → $SGAIL_ENDPOINT"
-    SGAIL_ARGS=(--endpoint "$SGAIL_ENDPOINT")
-    if [[ -n "${WITNESS_SGAIL_TOKEN:-}" ]]; then
-        SGAIL_ARGS+=(--token "$WITNESS_SGAIL_TOKEN")
-    fi
-    "$INSTALL_DIR/witness" enable-sync "${SGAIL_ARGS[@]}"
-fi
-
-# ── Step 6: Create dedicated system user ─────────────────────────────────────
-create_witness_user_linux() {
-    if id witness &>/dev/null 2>&1; then
-        info "System user 'witness' already exists."
-        return
-    fi
-    useradd --system --no-create-home --home-dir /var/lib/witness \
-            --shell /bin/false --comment "SGAIL Harborlight Witness daemon" witness \
-        || { warn "Could not create system user 'witness' — service will run as root."; return; }
-    mkdir -p /var/lib/witness
-    chown witness:witness /var/lib/witness
-    chmod 0700 /var/lib/witness
-    info "System user 'witness' created (home: /var/lib/witness)"
+# ── Step 3: Bundled files (soul, hardened unit) ──────────────────────────────
+RAW="https://raw.githubusercontent.com/bigblue-r4/kiss-protocol/main"
+fetch_if_missing() {   # $1 = path in this repo; prints a local path to it
+    if [[ -f "$SCRIPT_DIR/$1" ]]; then echo "$SCRIPT_DIR/$1"; return; fi
+    local tmp; tmp=$(mktemp)
+    curl -fsSL "$RAW/$1" -o "$tmp" || fatal "Could not fetch $1. Clone the repo and run install.sh from it."
+    echo "$tmp"
 }
+SOUL_SRC=$(fetch_if_missing payload/witness/default-soul.toml)
 
-# ── Step 7: Install init service ──────────────────────────────────────────────
+# ── Step 4: Set up and start the witness ─────────────────────────────────────
 if [[ "$(uname -s)" == "Linux" ]] && command -v systemctl &>/dev/null; then
-    info "Installing hardened systemd service…"
-    [[ "$(id -u)" -eq 0 ]] && create_witness_user_linux || warn "Not root — skipping user creation"
-
-    UNIT_SRC="$SCRIPT_DIR/packaging/systemd/witness.service"
-    if [[ -f "$UNIT_SRC" ]]; then
-        mkdir -p /etc/witness
-        cp "$UNIT_SRC" "$SYSTEMD_DIR/witness.service"
-        chmod 0644 "$SYSTEMD_DIR/witness.service"
-        info "Installed hardened unit from $UNIT_SRC"
-    else
-        # Fallback inline unit (non-hardened) when packaging/ is not available.
-        warn "packaging/systemd/witness.service not found — installing minimal unit"
-        cat > "$SYSTEMD_DIR/witness.service" <<'SERVICE'
-[Unit]
-Description=SGAIL Labs Harborlight Witness
-After=network.target
-StartLimitIntervalSec=60
-StartLimitBurst=5
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/witness start
-Restart=on-failure
-RestartSec=5s
-TimeoutStopSec=15s
-NoNewPrivileges=true
-
-[Install]
-WantedBy=multi-user.target
-SERVICE
-    fi
-
-    systemctl daemon-reload
-    systemctl enable witness.service
-    systemctl start  witness.service
-    info "Systemd service enabled and started."
+    [[ "$(id -u)" -eq 0 ]] || fatal "Run with sudo: the witness service runs under its own 'witness' user."
+    info "Setting up the hardened witness service…"
+    UNIT_SRC=$(fetch_if_missing packaging/systemd/witness.service)
+    # shellcheck source=packaging/witness-service.sh
+    source "$(fetch_if_missing packaging/witness-service.sh)"
+    witness_service_setup "$INSTALL_DIR/witness" "$SOUL_SRC" "$UNIT_SRC" start
     info "Check status: systemctl status witness"
 
 elif [[ "$(uname -s)" == "Darwin" ]]; then
+    mkdir -p "$HOME/.witness"
+    if [[ ! -f "$HOME/.witness/soul.toml" ]]; then
+        cp "$SOUL_SRC" "$HOME/.witness/soul.toml" && chmod 0400 "$HOME/.witness/soul.toml"
+    fi
+    if [[ -f "$HOME/.witness/primary/genesis.enc" ]]; then
+        info "Genesis already taken on this machine — kept."
+    else
+        "$INSTALL_DIR/witness" init
+    fi
     PLIST_SRC="$SCRIPT_DIR/packaging/launchd/ai.sgail.harborlight.witness.plist"
     PLIST_DST="/Library/LaunchDaemons/ai.sgail.harborlight.witness.plist"
     if [[ -f "$PLIST_SRC" ]]; then
@@ -238,5 +172,4 @@ echo "╔═══════════════════════�
 echo "║  SGAIL Labs Harborlight Firewall installed.               ║"
 echo "║                                                           ║"
 echo "║  witness status        — view current state               ║"
-echo "║  witness enable-sync   — opt in to SGAIL Labs sync        ║"
 echo "╚═══════════════════════════════════════════════════════════╝"
