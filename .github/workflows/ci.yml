@@ -33,6 +33,12 @@ jobs:
       - name: Build
         run: go build ./...
 
+      - name: Installer service setup (no root; root-only steps stubbed)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          go build -o "$RUNNER_TEMP/witness" ./cmd/witness
+          bash packaging/witness-service_test.sh "$RUNNER_TEMP/witness"
+
       - name: Lint
         if: matrix.os == 'ubuntu-latest'
         run: |

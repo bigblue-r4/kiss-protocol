@@ -82,3 +82,26 @@ func printDevBanner() {
 	fmt.Fprintln(os.Stderr, "  ╚══════════════════════════════════════════════════════════════╝")
 	fmt.Fprintln(os.Stderr, "")
 }
+
+const softwareKeyFilename = "signing.key" // 32-byte ed25519 seed, mode 0400
+
+// NewSoftware loads or generates an on-disk ed25519 signing key at
+// keyDir/signing.key for installs without a hardware token (config
+// "signer": "software"). Unlike NewDev this is a deliberate operating mode,
+// not a development shortcut: production checks stay on. Its limit is the
+// same, though, and the banner says so: the key sits on the machine it
+// protects, so someone with full control of that machine can use it. The
+// transparency mirror is what catches that.
+func NewSoftware(keyDir string) (*DevSigner, error) {
+	fmt.Fprintln(os.Stderr, "[witness] Software signing key (pilot grade): the key is a file on this machine.")
+	fmt.Fprintln(os.Stderr, "[witness] A hardware token (YubiKey PIV build) keeps it off the disk; the mirror catches a re-signed log.")
+	if err := os.MkdirAll(keyDir, 0700); err != nil {
+		return nil, fmt.Errorf("software signer: create key dir: %w", err)
+	}
+	seed, err := loadOrGenerateSeed(filepath.Join(keyDir, softwareKeyFilename))
+	if err != nil {
+		return nil, fmt.Errorf("software signer: %w", err)
+	}
+	priv := ed25519.NewKeyFromSeed(seed)
+	return &DevSigner{priv: priv, pub: priv.Public().(ed25519.PublicKey)}, nil
+}
