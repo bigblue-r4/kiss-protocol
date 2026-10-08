@@ -85,6 +85,8 @@ type Store struct {
 	// signature (see OpenedWithUnsignedHead).
 	unsignedHead bool
 	recovered    Recovery
+	last         Entry // the newest record, for Last
+	hasLast      bool
 	seq          uint64
 	leaves       [][32]byte
 	f            *os.File
@@ -167,8 +169,10 @@ func OpenTrusting(dir string, key []byte, s signer.Signer, trusted []ed25519.Pub
 	}
 
 	var seq uint64
+	var last Entry
 	if len(entries) > 0 {
-		seq = entries[len(entries)-1].Seq
+		last = entries[len(entries)-1]
+		seq = last.Seq
 	}
 
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
@@ -183,7 +187,7 @@ func OpenTrusting(dir string, key []byte, s signer.Signer, trusted []ed25519.Pub
 		}
 	}
 
-	return &Store{dir: dir, key: key, s: s, trusted: trusted, unsignedHead: unsigned, recovered: rec, seq: seq, leaves: leaves, f: f}, nil
+	return &Store{dir: dir, key: key, s: s, trusted: trusted, unsignedHead: unsigned, recovered: rec, last: last, hasLast: len(entries) > 0, seq: seq, leaves: leaves, f: f}, nil
 }
 
 // Recovery describes a crash tail removed from the log when it was opened.
@@ -191,6 +195,13 @@ type Recovery struct {
 	Bytes              int64  // bytes moved out of witness.log
 	UncommittedRecords int    // complete records the head did not yet cover (0 or 1)
 	QuarantineFile     string // where the bytes were moved; never deleted
+}
+
+// Last returns the newest record in the log (false when the log is empty).
+func (s *Store) Last() (Entry, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.last, s.hasLast
 }
 
 // Recovered reports a crash tail found and moved aside by Open (zero if none).
@@ -264,6 +275,7 @@ func (s *Store) Append(level, event, source string, data interface{}) error {
 	}
 
 	s.leaves = append(s.leaves, leafHash(e))
+	s.last, s.hasLast = e, true
 	return writeTreeHead(s.dir, s.key, s.s, s.leaves)
 }
 

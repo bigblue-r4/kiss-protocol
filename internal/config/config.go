@@ -33,6 +33,29 @@ type Config struct {
 	// FarmSilenceMinutes flags a farm source that stops reporting for this long
 	// (0 = default of 10).
 	FarmSilenceMinutes int `json:"farm_silence_minutes,omitempty"`
+	// DowntimeAlertMinutes: a recorded (clean) stop longer than this is logged
+	// as WARN at the next start (0 = default of 10). An unrecorded stop is
+	// always CRITICAL, however short.
+	DowntimeAlertMinutes int `json:"downtime_alert_minutes,omitempty"`
+	// MirrorEscalateAfter: consecutive failed mirror pushes before the mirror is
+	// recorded as unreachable (CRITICAL) (0 = default of 3).
+	MirrorEscalateAfter int `json:"mirror_escalate_after,omitempty"`
+}
+
+// DowntimeAlert is the configured clean-stop threshold, defaulting to 10 minutes.
+func (c *Config) DowntimeAlert() time.Duration {
+	if c.DowntimeAlertMinutes > 0 {
+		return time.Duration(c.DowntimeAlertMinutes) * time.Minute
+	}
+	return 10 * time.Minute
+}
+
+// MirrorEscalation is the configured failure count, defaulting to 3.
+func (c *Config) MirrorEscalation() int {
+	if c.MirrorEscalateAfter > 0 {
+		return c.MirrorEscalateAfter
+	}
+	return 3
 }
 
 // FarmSilence is the configured silence threshold, defaulting to 10 minutes.

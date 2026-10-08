@@ -206,6 +206,11 @@ func handleEvent(evt enforcer.Event, peers []gossip.Peer, s signer.Signer, mid s
 
 	case "WARN":
 		fmt.Printf("[enforcer] WARN seq=%d %s/%s\n", evt.Seq, evt.Source, evt.Event)
+
+	case "CRITICAL":
+		// The witness was down without recording a stop, or its mirror is
+		// missing or unreachable. Alerting and agent containment hook in here.
+		fmt.Printf("[enforcer] CRITICAL seq=%d %s/%s\n", evt.Seq, evt.Source, evt.Event)
 	}
 }
 

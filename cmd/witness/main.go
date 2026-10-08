@@ -42,11 +42,13 @@ import (
 	"github.com/bigblue-r4/kiss-protocol/internal/encrypt"
 	"github.com/bigblue-r4/kiss-protocol/internal/farm"
 	"github.com/bigblue-r4/kiss-protocol/internal/genesis"
+	"github.com/bigblue-r4/kiss-protocol/internal/lifecycle"
 	"github.com/bigblue-r4/kiss-protocol/internal/machid"
 	"github.com/bigblue-r4/kiss-protocol/internal/migrate"
 	"github.com/bigblue-r4/kiss-protocol/internal/mirror"
 	"github.com/bigblue-r4/kiss-protocol/internal/pipelock"
 	"github.com/bigblue-r4/kiss-protocol/internal/pipelock_bridge"
+	"github.com/bigblue-r4/kiss-protocol/internal/sandbox"
 	"github.com/bigblue-r4/kiss-protocol/internal/sbh"
 	"github.com/bigblue-r4/kiss-protocol/internal/signer"
 	"github.com/bigblue-r4/kiss-protocol/internal/soul"
@@ -291,6 +293,10 @@ func cmdStart() {
 		fatal("derive key: %v", err)
 	}
 
+	// First, before the witness starts any other program: keep the unit's
+	// read-only capability for this process only (see packaging/systemd).
+	capsErr := sandbox.DropAmbientCaps()
+
 	signerInst := resolveSigner(devMode, witnessDir())
 	checkSoulSignature(soul.Path(), devMode)
 
@@ -326,6 +332,13 @@ func cmdStart() {
 	if err != nil {
 		fatal("open store: %v", err)
 	}
+	// Read before anything below appends: the gap is measured from the last
+	// record the previous run wrote.
+	lastEntry, hasLast := s.Last()
+	if capsErr != nil {
+		warn("could not clear inherited capabilities: %v — programs the witness starts may inherit them", capsErr)
+		_ = s.Append("WARN", "ambient_caps_not_cleared", "witness", map[string]interface{}{"error": capsErr.Error()})
+	}
 	if r := s.Recovered(); r.Bytes > 0 {
 		// A write was interrupted (crash, kill, power loss). The log is intact
 		// up to its signed head; the partial or uncommitted bytes were moved
@@ -346,18 +359,37 @@ func cmdStart() {
 		})
 	}
 
+	// Time the witness was not running is part of the record. An unrecorded
+	// stop (crash, kill -9, power loss) is CRITICAL however short.
+	if ev, ok := lifecycle.Downtime(lastEntry, hasLast, time.Now().UTC(), cfg.DowntimeAlert()); ok {
+		if ev.Level != "INFO" {
+			warn("%s: witness was not running for %ds (stop recorded: %v)",
+				ev.Name, ev.Data["gap_seconds"], ev.Data["clean_stop"])
+		}
+		_ = s.Append(ev.Level, ev.Name, "witness", ev.Data)
+	}
+
 	broadcaster := death.New(cfg.PrimaryDir, mid)
 
 	// ── Transparency mirror ────────────────────────────────────────────────
+	// Required in production: without one, the signed heads live only on this
+	// machine and a rewrite by someone who controls it cannot be detected.
 	var mirrorBackend mirror.Mirror
+	var mirrorErr error
 	if cfg.MirrorURL != "" {
 		if mb, err := mirror.Open(cfg.MirrorURL); err != nil {
+			mirrorErr = err
 			warn("mirror open: %v (mirror push disabled)", err)
 		} else {
 			mirrorBackend = mb
 			fmt.Printf("[witness] Mirror push enabled → %s\n", cfg.MirrorURL)
 		}
 	}
+	if ev, ok := lifecycle.MirrorConfig(cfg.MirrorURL, mirrorErr, devMode); ok {
+		warn("%s — set mirror_url in %s", ev.Name, config.Path())
+		_ = s.Append(ev.Level, ev.Name, "witness", ev.Data)
+	}
+	mirrorHealth := lifecycle.NewMirrorHealth(cfg.MirrorEscalation())
 
 	// ── Pipelock bridge ────────────────────────────────────────────────────
 	plCfg := pipelock.DefaultConfig(cfg.PrimaryDir)
@@ -441,8 +473,14 @@ func cmdStart() {
 			return
 		}
 		go func() {
-			if err := mirrorBackend.Push(json.RawMessage(data)); err != nil {
+			err := mirrorBackend.Push(json.RawMessage(data))
+			if err != nil {
 				warn("mirror push: %v", err)
+			}
+			// First failure, the point it counts as unreachable, and the
+			// recovery are recorded; repeats in between are not.
+			if ev, ok := mirrorHealth.Result(err); ok {
+				_ = s.Append(ev.Level, ev.Name, "mirror", ev.Data)
 			}
 		}()
 	}
