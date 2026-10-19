@@ -105,8 +105,8 @@ Each line in `pipelock-audit.log` is a JSON object. Key fields:
 ## Checking Pipelock Events in the Log
 
 ```bash
-witness verify          # walk the full Merkle log
-witness prove <index>   # inclusion proof for a specific leaf
+witness verify --pubkey <trusted-hex-key> # walk the full Merkle log
+witness prove <index> --pubkey <trusted-hex-key> # inclusion proof for a specific leaf
 ```
 
 To inspect raw entries, look for leaves with `source=pipelock` in the

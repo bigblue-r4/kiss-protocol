@@ -115,12 +115,12 @@ Witness works completely offline. No account, no cloud endpoint, no registration
 witness init                    Take genesis snapshot, initialize Merkle log
 witness start [--dev]           Start the continuous witness daemon
 witness status                  Show current status
-witness verify                  Walk Merkle log and verify integrity
-witness prove <index>           Emit inclusion proof for leaf at index
+witness verify [--pubkey HEX]   Walk Merkle log and verify integrity
+witness prove <index> [--pubkey HEX] Emit inclusion proof for leaf at index
 witness migrate [src-dir]       Import v1 log into the v2 Merkle log (one-shot)
 witness soul sign [--dev]       Sign the soul file with the operator key
 witness soul verify             Verify the soul file signature
-witness audit [--max-lag N]     Compare local log against the transparency mirror
+witness audit [--max-lag N] [--pubkey HEX] Compare local log against the transparency mirror
 witness version                 Print version
 ```
 
@@ -282,3 +282,28 @@ See [`docs/threat-model.md`](docs/threat-model.md) for attacker capabilities, gu
 ## License
 
 MIT. See `LICENSE`.
+
+### Pinning the log signer
+
+For signer identity checks, supply a trusted Ed25519 public key obtained out of
+band, rather than copying `signer_key` from the log under investigation:
+
+```sh
+witness verify --pubkey <64-hex-characters>
+witness prove 0 --pubkey <64-hex-characters>
+witness audit --max-lag 50 --pubkey-file ~/.witness/trust/signers.txt
+```
+
+All three commands accept repeatable `--pubkey HEX` and `--pubkey-file PATH`
+flags (also `--flag=value`), before or after the proof index. Files use the soul
+allowlist format: `<label> <hex-key>`, with blank lines and `#` comments allowed.
+Multiple keys support rotation; an explicitly empty pin set is an error.
+With pins, the local head must be signed by an accepted key and its signature
+must verify; missing signatures and untrusted signers fail with
+`INTEGRITY FAILURE` (exit 1). Invalid flags or key files also exit 1.
+Without pins, legacy verification is preserved and one warning is printed to
+stderr: `NOTE  signer not pinned: pass --pubkey to check who signed this log`.
+An unpinned check verifies consistency, MAC, and any signature against the key
+in the head; it does not establish who signed. Pinning does not prove freshness,
+prevent rollback by itself, or authenticate the remote mirror's head. Inclusion
+proof output still needs an independently trusted tree head for third-party use.

@@ -6,6 +6,9 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 
 ## [Unreleased]
 
+### Security
+- Published `verify`, `prove`, and `audit` commands can now pin local tree-head signing keys with repeatable `--pubkey HEX` and `--pubkey-file PATH` flags. Pins require a valid signature by an accepted key, rejecting attacker-key substitutions and unsigned heads. Without flags, legacy behavior remains with an explicit signer-not-pinned notice. No log format changes.
+
 ### Added
 - **Time the witness was not running is recorded.** At start, the witness records `witness_downtime` with the gap since its last record and whether the stop was recorded. An unrecorded stop (crash, `kill -9`, power loss) is **CRITICAL** however short; a recorded stop longer than `downtime_alert_minutes` (default 10) is WARN; the first start after `witness init` is INFO.
 - **Mirror problems are recorded, not just printed.** No `mirror_url` is **CRITICAL** `mirror_not_configured` at every start (WARN in `--dev`), a mirror that won't open is `mirror_misconfigured`, and pushes record the first failure (WARN `mirror_push_failed`), the point the mirror counts as unreachable (CRITICAL `mirror_unreachable`, after `mirror_escalate_after` failures, default 3) and the recovery (INFO `mirror_push_recovered`), without repeating every failure in between.

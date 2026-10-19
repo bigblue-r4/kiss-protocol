@@ -96,13 +96,17 @@ Usage:
   witness init                    Take genesis snapshot, initialize Merkle log
   witness start [--dev]           Start the continuous witness daemon
   witness status                  Show current witness status
-  witness verify                  Walk Merkle log and verify integrity
-  witness prove <index>           Emit inclusion proof for leaf at index
+  witness verify [--pubkey HEX]   Walk Merkle log and verify integrity
+  witness prove <index> [--pubkey HEX] Emit inclusion proof for leaf at index
   witness migrate [src-dir]       Import v1 log into v2 Merkle log (one-shot)
   witness soul sign [--dev]       Sign the soul file with the configured signer
   witness soul verify             Verify soul file signature against allowlist
-  witness audit [--max-lag N]     Compare local Merkle log to transparency mirror
+  witness audit [--max-lag N] [--pubkey HEX] Compare local Merkle log to transparency mirror
   witness version                 Print version
+
+Verifier flags (verify, prove, audit):
+  --pubkey HEX       Trusted Ed25519 public key (repeatable)
+  --pubkey-file PATH Soul-format signer allowlist (repeatable)
 
 Peer mesh and enforcement: run 'enforcer --help'
 `, version)

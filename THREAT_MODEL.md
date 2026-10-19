@@ -72,3 +72,15 @@ For each attacker capability above, state what Witness guarantees and by what me
 1. **Gossip trust bootstrap (Phase 4 pre-req):** How does a node verify a peer's identity on first contact? Options: (a) pre-shared pubkey exchange out-of-band, added to allowlist before `witness peer add`; (b) TOFU with a "first-contact" log entry and manual confirmation; (c) require allowlist entry before any peering is accepted. Must be decided before Phase 4 to avoid locking in a weaker model.
 2. **seccomp profile completeness (Phase 3 pre-req):** The generated seccomp profile is derived from observed syscalls during integration tests. The death-broadcast path (parallel file writes, SGAIL HTTP under short deadline) and the watchdog subprocess spawn exercise syscalls that may not appear in happy-path tests. The profile must cover error and shutdown paths before defaulting on — otherwise a kill signal during death-broadcast will cause the daemon to crash instead of completing the broadcast.
 3. **v1 import fidelity (Phase 1 decision):** The existing `internal/store` log is a SHA-256 linear hash chain, not a Merkle tree. v1 entries can be imported as Merkle leaves, but the resulting Merkle root will not match any hash stored in the v1 log — there is no cryptographic continuity, only documentary continuity. The import boundary marker leaf must explicitly state this. Decide whether to document the v1 chain as a separate audit trail or treat the import as a clean-break migration.
+
+## Published verifier signer identity
+
+`witness verify`, `prove`, and `audit` accept repeatable `--pubkey HEX` and
+`--pubkey-file PATH` flags. The file uses the soul allowlist's `<label> <hex-key>`
+format. Non-empty pins require a signed local tree head from an accepted
+Ed25519 key. Obtain and protect pins out of band: a key taken from an
+attacker-writable head is not a trust root. Without pins the commands retain
+legacy consistency checks and warn that signer identity is not pinned.
+Pins alone do not establish freshness or prevent replay of an older valid log;
+an independent mirror/checkpoint is still needed. `audit` compares the mirror
+with the pinned local log; these flags do not authenticate the remote head.
