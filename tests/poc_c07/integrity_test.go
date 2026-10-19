@@ -3,6 +3,7 @@
 package poc_c07
 
 import (
+	"crypto/ed25519"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -91,18 +92,24 @@ func TestC07_7_3_2_Probe_MACKeyInputIsNotSecret(t *testing.T) {
 	}
 }
 
-// Probe: a reader that opens the log without a signer (witness verify, audit,
-// prove) has nothing to pin to, so a head signed by any key passes there.
-func TestC07_7_3_2_Probe_PublishedVerifierPinsTheSigner(t *testing.T) {
+// The published verifiers (witness verify, audit, prove) open the log through
+// store.OpenPinned. Given the witness's published key (--pubkey), a rewritten
+// log re-signed with any other key must be refused. Was a failing probe on
+// v3.3.3, when they opened with no signer and had nothing to pin to.
+func TestC07_7_3_2_PublishedVerifierPinsTheSigner(t *testing.T) {
 	key := machineKey(t)
 	witness, attacker := newSigner(t), newSigner(t)
 	dir := writeLog(t, key, witness, 5)
+	pinned := []ed25519.PublicKey{witness.PublicKey()}
+	if _, err := store.OpenPinned(dir, key, pinned); err != nil {
+		t.Fatalf("pinned verifier refused an intact log signed by the pinned key: %v", err)
+	}
 	e := readEntries(t, dir, key)
 	rewriteLog(t, dir, key, append(e[:2:2], e[3:]...))
 	forgeHead(t, dir, key, attacker)
-	if _, err := store.Open(dir, key, nil); err == nil {
-		t.Fatal("verifier path with no signer (store.Open(dir, key, nil), as cmd/witness/verify.go:30 calls it) " +
-			"accepted a rewritten log re-signed with an attacker's key")
+	if _, err := store.OpenPinned(dir, key, pinned); !errors.Is(err, store.ErrUnexpectedSigner) {
+		t.Fatalf("pinned verifier (store.OpenPinned, as witness verify --pubkey calls it) "+
+			"did not refuse a rewritten log re-signed with an attacker's key: %v", err)
 	}
 }
 
