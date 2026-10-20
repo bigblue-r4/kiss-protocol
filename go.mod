@@ -1,12 +1,11 @@
 module github.com/bigblue-r4/kiss-protocol
 
-go 1.22
-
-toolchain go1.25.0
+go 1.25.0
 
 require (
 	github.com/BurntSushi/toml v1.3.2
-	golang.org/x/crypto v0.19.0
+	github.com/go-piv/piv-go v1.11.0
+	golang.org/x/crypto v0.52.0
 )
 
 require (
