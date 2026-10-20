@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bigblue-r4/kiss-protocol/internal/config"
@@ -35,15 +36,25 @@ const defaultMaxLag = 10
 //	--max-lag N  Override the maximum tolerated lag (leaves). Default: 10.
 //	             Pass 0 to disable lag checking.
 func cmdAudit() {
+	pins, args := verifierPins(os.Args[2:])
 	maxLag := uint64(defaultMaxLag)
-	for i := 2; i < len(os.Args)-1; i++ {
-		if os.Args[i] == "--max-lag" {
-			v, err := strconv.ParseUint(os.Args[i+1], 10, 64)
-			if err != nil {
-				fatal("--max-lag: %v", err)
-			}
-			maxLag = v
+	for i := 0; i < len(args); i++ {
+		name, value, equal := strings.Cut(args[i], "=")
+		if name != "--max-lag" {
+			fatal("unknown audit argument %q", args[i])
 		}
+		if !equal {
+			i++
+			if i == len(args) {
+				fatal("--max-lag requires a value")
+			}
+			value = args[i]
+		}
+		v, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			fatal("--max-lag: %v", err)
+		}
+		maxLag = v
 	}
 
 	cfg, err := config.Load(config.Path())
@@ -66,9 +77,9 @@ func cmdAudit() {
 		fatal("derive key: %v", err)
 	}
 
-	s, err := store.Open(cfg.PrimaryDir, key, nil)
+	s, err := store.OpenPinned(cfg.PrimaryDir, key, pins)
 	if err != nil {
-		fatal("open store: %v", err)
+		fatal("INTEGRITY FAILURE: %v", err)
 	}
 	defer s.Close()
 	local := s.Head()

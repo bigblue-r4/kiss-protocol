@@ -93,3 +93,15 @@ In rough priority order:
   Standalone is supported but with a documented reduction in tamper-evidence.
 - Host clock is monotonic forward. Witness does not depend on wall-clock accuracy but does
   depend on counters not regressing.
+
+## Published verifier signer identity
+
+`witness verify`, `prove`, and `audit` accept repeatable `--pubkey HEX` and
+`--pubkey-file PATH` flags. The file uses the soul allowlist's `<label> <hex-key>`
+format. Non-empty pins require a signed local tree head from an accepted
+Ed25519 key. Obtain and protect pins out of band: a key taken from an
+attacker-writable head is not a trust root. Without pins the commands retain
+legacy consistency checks and warn that signer identity is not pinned.
+Pins alone do not establish freshness or prevent replay of an older valid log;
+an independent mirror/checkpoint is still needed. `audit` compares the mirror
+with the pinned local log; these flags do not authenticate the remote head.

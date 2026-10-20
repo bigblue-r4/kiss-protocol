@@ -17,6 +17,10 @@ import (
 //	0 — log is intact
 //	1 — tampering, truncation, or MAC failure detected
 func cmdVerify() {
+	pins, args := verifierPins(os.Args[2:])
+	if len(args) != 0 {
+		fatal("usage: witness verify [--pubkey HEX] [--pubkey-file PATH]")
+	}
 	mid := machid.Get()
 	cfg, err := config.Load(config.Path())
 	if err != nil {
@@ -27,7 +31,7 @@ func cmdVerify() {
 		fatal("derive key: %v", err)
 	}
 
-	s, err := store.Open(cfg.PrimaryDir, key, nil)
+	s, err := store.OpenPinned(cfg.PrimaryDir, key, pins)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[witness] INTEGRITY FAILURE: %v\n", err)
 		os.Exit(1)

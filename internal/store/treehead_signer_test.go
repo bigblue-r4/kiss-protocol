@@ -197,3 +197,98 @@ func TestUnsignedHeadWithoutSignerIsNotReported(t *testing.T) {
 		t.Fatal("MAC-only mode is not a downgrade")
 	}
 }
+
+func TestOpenPinned(t *testing.T) {
+	witness, attacker := newTestDevSigner(t), newTestDevSigner(t)
+	for _, tc := range []struct {
+		name string
+		head *testDevSigner
+		pins []ed25519.PublicKey
+		want error
+	}{
+		{"legitimate", witness, []ed25519.PublicKey{witness.PublicKey()}, nil},
+		{"rotation set", witness, []ed25519.PublicKey{attacker.PublicKey(), witness.PublicKey()}, nil},
+		{"attacker", attacker, []ed25519.PublicKey{witness.PublicKey()}, ErrUnexpectedSigner},
+		{"unsigned", nil, []ed25519.PublicKey{witness.PublicKey()}, ErrHeadNotSigned},
+		{"legacy signed", attacker, nil, nil},
+		{"legacy unsigned", nil, nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := signedLog(t, witness)
+			forgeHead(t, dir, tc.head)
+			st, err := OpenPinned(dir, testKey(), tc.pins)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("got %v, want %v", err, tc.want)
+			}
+			if st != nil {
+				defer st.Close()
+				if _, err := st.VerifyIntegrity(); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func TestPinnedIntegrityRejectsReplacedHead(t *testing.T) {
+	witness, attacker := newTestDevSigner(t), newTestDevSigner(t)
+	dir := signedLog(t, witness)
+	st, err := OpenPinned(dir, testKey(), []ed25519.PublicKey{witness.PublicKey()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	forgeHead(t, dir, attacker)
+	if _, err := st.VerifyIntegrity(); !errors.Is(err, ErrUnexpectedSigner) {
+		t.Fatal(err)
+	}
+	forgeHead(t, dir, nil)
+	if _, err := st.VerifyIntegrity(); !errors.Is(err, ErrHeadNotSigned) {
+		t.Fatal(err)
+	}
+}
+
+func TestPinnedRequiresHeadEvenForEmptyLog(t *testing.T) {
+	_, err := OpenPinned(t.TempDir(), testKey(), []ed25519.PublicKey{newTestDevSigner(t).PublicKey()})
+	if !errors.Is(err, ErrHeadNotSigned) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestPinnedRejectsInvalidSignature(t *testing.T) {
+	witness := newTestDevSigner(t)
+	dir := signedLog(t, witness)
+	head, err := readStoredHead(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head.Signature = hex.EncodeToString(make([]byte, ed25519.SignatureSize))
+	data, err := json.Marshal(head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, treeHeadFilename), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := OpenPinned(dir, testKey(), []ed25519.PublicKey{witness.PublicKey()}); err == nil {
+		st.Close()
+		t.Fatal("accepted invalid signature")
+	}
+}
+
+func TestPinnedCrashTailRecovery(t *testing.T) {
+	witness := newTestDevSigner(t)
+	dir := signedLog(t, witness)
+	appendRaw(t, dir, []byte{0, 0})
+	st, err := OpenPinned(dir, testKey(), []ed25519.PublicKey{witness.PublicKey()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if st.Recovered().Bytes != 2 {
+		t.Fatalf("recovery: %+v", st.Recovered())
+	}
+	if n, err := st.VerifyIntegrity(); err != nil || n != 3 {
+		t.Fatalf("%d, %v", n, err)
+	}
+}

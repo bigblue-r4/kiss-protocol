@@ -19,13 +19,14 @@ import (
 //
 // Usage: witness prove <index>
 func cmdProve() {
-	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: witness prove <index>")
+	pins, args := verifierPins(os.Args[2:])
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: witness prove <index> [--pubkey HEX] [--pubkey-file PATH]")
 		os.Exit(1)
 	}
-	index, err := strconv.ParseUint(os.Args[2], 10, 64)
+	index, err := strconv.ParseUint(args[0], 10, 64)
 	if err != nil {
-		fatal("invalid index %q: %v", os.Args[2], err)
+		fatal("invalid index %q: %v", args[0], err)
 	}
 
 	mid := machid.Get()
@@ -38,9 +39,9 @@ func cmdProve() {
 		fatal("derive key: %v", err)
 	}
 
-	s, err := store.Open(cfg.PrimaryDir, key, nil)
+	s, err := store.OpenPinned(cfg.PrimaryDir, key, pins)
 	if err != nil {
-		fatal("open store: %v", err)
+		fatal("INTEGRITY FAILURE: %v", err)
 	}
 	defer s.Close()
 

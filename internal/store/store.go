@@ -62,6 +62,9 @@ var ErrMissingTreeHead = errors.New("tree head missing for a non-empty log: the 
 // to OpenTrusting (which is how a key rotation keeps opening the old head).
 var ErrUnexpectedSigner = errors.New("tree head signed by a key that is neither this witness's signer nor in the trust allowlist: the head may have been forged")
 
+// ErrHeadNotSigned reports a missing signature when verification pins are required.
+var ErrHeadNotSigned = errors.New("tree head is not signed")
+
 // TreeHead is the Merkle log head stored at tree-head.json.
 type TreeHead struct {
 	Size      uint64 `json:"size"`
@@ -81,6 +84,7 @@ type Store struct {
 	s   signer.Signer // nil → BLAKE3-MAC mode (Phase 1)
 	// trusted: other keys whose heads are accepted when s is set (see OpenTrusting).
 	trusted []ed25519.PublicKey
+	pinned  []ed25519.PublicKey
 	// unsignedHead: opened with a signer, but the stored head carried no
 	// signature (see OpenedWithUnsignedHead).
 	unsignedHead bool
@@ -106,6 +110,17 @@ func Open(dir string, key []byte, s signer.Signer) (*Store, error) {
 // rotation the existing head is signed by the old key; with the old key
 // trusted it opens, and the next Append signs with s. Ignored when s is nil.
 func OpenTrusting(dir string, key []byte, s signer.Signer, trusted []ed25519.PublicKey) (*Store, error) {
+	return openStore(dir, key, s, trusted, nil)
+}
+
+// OpenPinned opens for verification without a signer. Non-empty pins require a
+// signed head from one of those keys. Empty pins preserve Open(dir, key, nil).
+// Like Open, it may quarantine a crash tail; it does not provide a signing key.
+func OpenPinned(dir string, key []byte, pinned []ed25519.PublicKey) (*Store, error) {
+	return openStore(dir, key, nil, nil, pinned)
+}
+
+func openStore(dir string, key []byte, s signer.Signer, trusted, pinned []ed25519.PublicKey) (*Store, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
@@ -128,11 +143,11 @@ func OpenTrusting(dir string, key []byte, s signer.Signer, trusted []ed25519.Pub
 	// signed (signing it would let anyone with the machine key get a forged
 	// record signed by restarting the witness).
 	committed := len(leaves)
-	if len(leaves) > 0 {
+	if len(leaves) > 0 || len(pinned) > 0 {
 		if h, err := readStoredHead(dir); err == nil && h.Size >= 1 && h.Size+1 == uint64(len(leaves)) {
 			committed = int(h.Size)
 		}
-		if err := verifyTreeHead(dir, key, s, trusted, leaves[:committed]); err != nil {
+		if err := verifyTreeHead(dir, key, s, trusted, pinned, leaves[:committed]); err != nil {
 			return nil, fmt.Errorf("store: tree head integrity: %w", err)
 		}
 	}
@@ -163,7 +178,7 @@ func OpenTrusting(dir string, key []byte, s signer.Signer, trusted []ed25519.Pub
 	}
 	if committed < len(leaves) {
 		// Not a clean crash tail: the head must cover every record.
-		if err := verifyTreeHead(dir, key, s, trusted, leaves); err != nil {
+		if err := verifyTreeHead(dir, key, s, trusted, pinned, leaves); err != nil {
 			return nil, fmt.Errorf("store: tree head integrity: %w", err)
 		}
 	}
@@ -187,7 +202,7 @@ func OpenTrusting(dir string, key []byte, s signer.Signer, trusted []ed25519.Pub
 		}
 	}
 
-	return &Store{dir: dir, key: key, s: s, trusted: trusted, unsignedHead: unsigned, recovered: rec, last: last, hasLast: len(entries) > 0, seq: seq, leaves: leaves, f: f}, nil
+	return &Store{dir: dir, key: key, s: s, trusted: trusted, pinned: pinned, unsignedHead: unsigned, recovered: rec, last: last, hasLast: len(entries) > 0, seq: seq, leaves: leaves, f: f}, nil
 }
 
 // Recovery describes a crash tail removed from the log when it was opened.
@@ -326,10 +341,10 @@ func (s *Store) VerifyIntegrity() (uint64, error) {
 	for i, e := range entries {
 		leaves[i] = leafHash(e)
 	}
-	if len(leaves) == 0 {
+	if len(leaves) == 0 && len(s.pinned) == 0 {
 		return 0, nil
 	}
-	if err := verifyTreeHead(s.dir, s.key, s.s, s.trusted, leaves); err != nil {
+	if err := verifyTreeHead(s.dir, s.key, s.s, s.trusted, s.pinned, leaves); err != nil {
 		return 0, err
 	}
 	return uint64(len(leaves)), nil
@@ -491,10 +506,14 @@ func writeTreeHead(dir string, key []byte, s signer.Signer, leaves [][32]byte) e
 // only taken at its word when no signer is available to pin to. If s is
 // non-nil and no sig is present, it does not fail (allows Phase 1 → Phase 2
 // transition without a re-init); Open reports it through OpenedWithUnsignedHead.
-func verifyTreeHead(dir string, key []byte, s signer.Signer, trusted []ed25519.PublicKey, leaves [][32]byte) error {
+// Non-empty pinned keys instead require a signature from that set, even without s.
+func verifyTreeHead(dir string, key []byte, s signer.Signer, trusted, pinned []ed25519.PublicKey, leaves [][32]byte) (verifyErr error) {
 	data, err := os.ReadFile(filepath.Join(dir, treeHeadFilename))
 	if err != nil {
 		if os.IsNotExist(err) {
+			if len(pinned) > 0 && len(leaves) == 0 {
+				return fmt.Errorf("%w (head key <missing>, pinned keys %x)", ErrHeadNotSigned, pinned)
+			}
 			if len(leaves) == 0 {
 				return nil // a new, empty store: the head is created on first Append
 			}
@@ -509,6 +528,14 @@ func verifyTreeHead(dir string, key []byte, s signer.Signer, trusted []ed25519.P
 	var head TreeHead
 	if err := json.Unmarshal(data, &head); err != nil {
 		return fmt.Errorf("parse tree head: %w", err)
+	}
+
+	if len(pinned) > 0 {
+		defer func() {
+			if verifyErr != nil {
+				verifyErr = fmt.Errorf("%w (head key %q, pinned keys %x)", verifyErr, head.SignerKey, pinned)
+			}
+		}()
 	}
 
 	root := merkle.Root(leaves)
@@ -535,6 +562,10 @@ func verifyTreeHead(dir string, key []byte, s signer.Signer, trusted []ed25519.P
 		return errors.New("tree head MAC failed — tree head may have been tampered")
 	}
 
+	if len(pinned) > 0 && head.Signature == "" {
+		return ErrHeadNotSigned
+	}
+
 	// Ed25519 signature check (Phase 2+).
 	if head.Signature != "" {
 		rawSig, err := hex.DecodeString(head.Signature)
@@ -544,6 +575,9 @@ func verifyTreeHead(dir string, key []byte, s signer.Signer, trusted []ed25519.P
 		pubBytes, err := hex.DecodeString(head.SignerKey)
 		if err != nil || len(pubBytes) != ed25519.PublicKeySize {
 			return errors.New("tree head: malformed signer_key")
+		}
+		if len(pinned) > 0 && !keyAccepted(pubBytes, nil, pinned) {
+			return ErrUnexpectedSigner
 		}
 		if s != nil && !keyAccepted(pubBytes, s.PublicKey(), trusted) {
 			return fmt.Errorf("%w (head key %s, this witness's key %s)",
