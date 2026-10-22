@@ -41,6 +41,7 @@ import (
 	"github.com/bigblue-r4/kiss-protocol/internal/drift"
 	"github.com/bigblue-r4/kiss-protocol/internal/encrypt"
 	"github.com/bigblue-r4/kiss-protocol/internal/farm"
+	"github.com/bigblue-r4/kiss-protocol/internal/feeds"
 	"github.com/bigblue-r4/kiss-protocol/internal/genesis"
 	"github.com/bigblue-r4/kiss-protocol/internal/lifecycle"
 	"github.com/bigblue-r4/kiss-protocol/internal/machid"
@@ -73,6 +74,10 @@ func main() {
 		cmdVerify()
 	case "prove":
 		cmdProve()
+	case "export":
+		cmdExport()
+	case "verify-export":
+		cmdVerifyExport()
 	case "migrate":
 		cmdMigrate()
 	case "soul":
@@ -98,13 +103,17 @@ Usage:
   witness status                  Show current witness status
   witness verify [--pubkey HEX]   Walk Merkle log and verify integrity
   witness prove <index> [--pubkey HEX] Emit inclusion proof for leaf at index
+  witness export [--since T] [--until T] [--source S] [--out FILE] [--pubkey HEX]
+                                  Write a self-verifying copy of the log (JSON)
+  witness verify-export FILE --pubkey HEX [--prior HEADFILE]...
+                                  Check an export offline, with only the public key
   witness migrate [src-dir]       Import v1 log into v2 Merkle log (one-shot)
   witness soul sign [--dev]       Sign the soul file with the configured signer
   witness soul verify             Verify soul file signature against allowlist
   witness audit [--max-lag N] [--pubkey HEX] Compare local Merkle log to transparency mirror
   witness version                 Print version
 
-Verifier flags (verify, prove, audit):
+Verifier flags (verify, prove, audit, export, verify-export):
   --pubkey HEX       Trusted Ed25519 public key (repeatable)
   --pubkey-file PATH Soul-format signer allowlist (repeatable)
 
@@ -436,7 +445,23 @@ func cmdStart() {
 		fmt.Printf("[witness] Farm events tailing → %s (silence alarm after %s)\n",
 			cfg.FarmEventsPath, cfg.FarmSilence())
 	}
+	// ── Named event feeds (docs/event-feeds.md) ───────────────────────────
+	if err := cfg.ValidateEventFeeds(); err != nil {
+		fatal("config: %v", err)
+	}
+	var eventFeeds []*feeds.Bridge
+	for _, ef := range cfg.EventFeeds {
+		br := feeds.New(ef.Path, ef.Source, s)
+		br.ResumeFrom(filepath.Join(cfg.PrimaryDir, "tail-state", "feed_"+ef.Source+".json"))
+		br.Start()
+		eventFeeds = append(eventFeeds, br)
+		fmt.Printf("[witness] Event feed %q tailing → %s\n", ef.Source, ef.Path)
+	}
 	stopFeeds := func() {
+		for _, br := range eventFeeds {
+			br.Stop()
+		}
+		eventFeeds = nil
 		for _, br := range sbhBridges {
 			br.Stop()
 		}
@@ -463,6 +488,7 @@ func cmdStart() {
 		"pipelock":     plCfg.AuditLogPath(),
 		"sbh_enabled":  len(sbhBridges) > 0,
 		"farm_enabled": farmBridge != nil,
+		"event_feeds":  len(eventFeeds),
 	})
 
 	fmt.Printf("[witness] Daemon started (PID %d)\n", os.Getpid())

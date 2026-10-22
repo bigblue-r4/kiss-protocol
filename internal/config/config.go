@@ -6,8 +6,10 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 )
 
@@ -30,6 +32,10 @@ type Config struct {
 	// FarmEventsPath is a farm-automation NDJSON feed (docs/farm-events.md):
 	// readings, alarms, setting changes, access and health records.
 	FarmEventsPath string `json:"farm_events_path,omitempty"`
+	// EventFeeds are named NDJSON feeds (docs/event-feeds.md), each recorded
+	// under its own source name. File permissions decide who can write as
+	// which source, so give each producing program its own file.
+	EventFeeds []EventFeed `json:"event_feeds,omitempty"`
 	// FarmSilenceMinutes flags a farm source that stops reporting for this long
 	// (0 = default of 10).
 	FarmSilenceMinutes int `json:"farm_silence_minutes,omitempty"`
@@ -44,6 +50,41 @@ type Config struct {
 	// YubiKey PIV token (needs the piv build); "software" uses an on-disk key
 	// in the witness's own folder (pilot grade; see signer.NewSoftware).
 	Signer string `json:"signer,omitempty"`
+}
+
+// EventFeed is one named feed: lines in Path are recorded as Source.
+type EventFeed struct {
+	Path   string `json:"path"`
+	Source string `json:"source"`
+}
+
+var feedSourceRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,31}$`)
+
+// reservedSources are written by the witness itself or its built-in bridges; a
+// feed using one could pass its lines off as theirs.
+var reservedSources = map[string]bool{"witness": true, "witness-init": true, "sbh": true, "farm": true, "pipelock": true, "drift": true, "migrate": true, "pd": true, "pd-system": true, "mirror": true, "enforcer": true, "anomaly": true}
+
+// ValidateEventFeeds rejects a feed list a reader of the log could be misled
+// by: an empty path, a malformed, reserved or repeated source, or one file
+// configured twice.
+func (c *Config) ValidateEventFeeds() error {
+	sources, paths := map[string]bool{}, map[string]bool{}
+	for i, f := range c.EventFeeds {
+		switch {
+		case f.Path == "":
+			return fmt.Errorf("event_feeds[%d]: path is empty", i)
+		case !feedSourceRE.MatchString(f.Source):
+			return fmt.Errorf("event_feeds[%d]: source %q must match %s", i, f.Source, feedSourceRE)
+		case reservedSources[f.Source]:
+			return fmt.Errorf("event_feeds[%d]: source %q is reserved for the witness's own records", i, f.Source)
+		case sources[f.Source]:
+			return fmt.Errorf("event_feeds[%d]: source %q used twice", i, f.Source)
+		case paths[filepath.Clean(f.Path)]:
+			return fmt.Errorf("event_feeds[%d]: path %s used twice", i, f.Path)
+		}
+		sources[f.Source], paths[filepath.Clean(f.Path)] = true, true
+	}
+	return nil
 }
 
 // DowntimeAlert is the configured clean-stop threshold, defaulting to 10 minutes.
