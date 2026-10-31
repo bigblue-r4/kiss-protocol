@@ -521,10 +521,16 @@ func cmdStart() {
 
 	fireDeath := func(reason, detail string) {
 		fmt.Printf("[witness] Death trigger: %s — writing snapshot…\n", reason)
-		_ = s.Append("DEATH", reason, "witness", map[string]string{"detail": detail})
+		// Stop everything that writes to the log first, and record the stop
+		// last. bridge.Stop flushes pipelock's own shutdown events into the
+		// log; written before them, the DEATH entry was no longer the last
+		// entry, so the next start read a clean systemctl restart as an
+		// unrecorded stop and raised a CRITICAL witness_downtime.
+		// lifecycle.Downtime depends on this order.
 		stopFeeds()
 		bridge.Stop()
 		adet.Stop()
+		_ = s.Append("DEATH", reason, "witness", map[string]string{"detail": detail})
 		_ = s.Close()
 		logData, _ := os.ReadFile(filepath.Join(cfg.PrimaryDir, "witness.log"))
 		broadcaster.Fire(logData, snapEncBytes)
