@@ -177,16 +177,39 @@ func HashOneFile(path string) *FileEntry {
 	}
 }
 
-func procList() []string {
-	out, err := exec.Command("ps", "-eo", "comm").Output()
+func procList() []string { return ProcNames() }
+
+// ProcNames lists the distinct command names of running processes, skipping
+// Linux kernel threads. Kernel threads (kthreadd, PID 2, and its children)
+// rename themselves after the work queue they are serving — kworker/0:1-events
+// becomes kworker/0:1-mm_percpu_wq — so a name-based comparison saw dozens of
+// "new processes" on every drift check on an idle machine. They are not
+// programs anyone launched, so they are left out of both genesis and drift.
+func ProcNames() []string {
+	out, err := exec.Command("ps", "-eo", "pid=,ppid=,comm=").Output()
 	if err != nil {
 		return nil
 	}
+	return parseProcNames(string(out), runtime.GOOS == "linux")
+}
+
+// parseProcNames reads `ps -eo pid=,ppid=,comm=` output. comm may contain
+// spaces, so everything after the second field is the name.
+func parseProcNames(out string, skipKernelThreads bool) []string {
 	var procs []string
-	for _, line := range strings.Split(string(out), "\n") {
-		p := strings.TrimSpace(line)
-		if p != "" && p != "COMMAND" && p != "COMM" {
-			procs = append(procs, p)
+	seen := make(map[string]bool)
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 3 {
+			continue
+		}
+		if skipKernelThreads && (f[0] == "2" || f[1] == "2") {
+			continue
+		}
+		name := strings.Join(f[2:], " ")
+		if !seen[name] {
+			seen[name] = true
+			procs = append(procs, name)
 		}
 	}
 	return procs

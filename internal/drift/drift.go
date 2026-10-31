@@ -2,9 +2,6 @@
 package drift
 
 import (
-	"os/exec"
-	"strings"
-
 	"github.com/bigblue-r4/kiss-protocol/internal/genesis"
 )
 
@@ -69,22 +66,4 @@ func Measure(snap *genesis.Snapshot) ([]Change, error) {
 	return changes, nil
 }
 
-func currentProcs() []string {
-	out, err := exec.Command("ps", "-eo", "comm").Output()
-	if err != nil {
-		return nil
-	}
-	var procs []string
-	seen := make(map[string]bool)
-	for _, line := range strings.Split(string(out), "\n") {
-		p := strings.TrimSpace(line)
-		if p == "" || p == "COMMAND" || p == "COMM" {
-			continue
-		}
-		if !seen[p] {
-			seen[p] = true
-			procs = append(procs, p)
-		}
-	}
-	return procs
-}
+func currentProcs() []string { return genesis.ProcNames() }
