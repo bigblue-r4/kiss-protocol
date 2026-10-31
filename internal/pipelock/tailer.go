@@ -221,6 +221,11 @@ func (t *Tailer) Run() {
 	var reader *bufio.Reader
 	var pos int64 // logical position: end of the last complete line consumed
 	firstOpen := true
+	// appeared: the file did not exist when the tailer started and was created
+	// while it was watching, so every line in it is new. Starting such a file
+	// at its end (as "fresh" does for pre-existing history) dropped whatever its
+	// creator wrote first — e.g. sbh's first verdict, which creates the log.
+	appeared := false
 
 	openFile := func() bool {
 		var err error
@@ -239,6 +244,8 @@ func (t *Tailer) Run() {
 		case !firstOpen:
 			// Replaced or truncated while running: everything in it is new.
 			info.Mode, info.From = "rotated", 0
+		case appeared:
+			info.Mode, info.From = "created", 0
 		case t.statePath == "":
 			info.Mode, info.From = "fresh", size // only tail new events
 		default:
@@ -282,6 +289,9 @@ func (t *Tailer) Run() {
 		}
 		if openFile() {
 			break
+		}
+		if _, err := os.Stat(t.path); os.IsNotExist(err) {
+			appeared = true
 		}
 		time.Sleep(500 * time.Millisecond)
 	}

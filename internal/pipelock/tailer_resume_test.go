@@ -282,3 +282,40 @@ func TestSkippedLinesDoNotBlockTheCommit(t *testing.T) {
 		t.Fatalf("saved offset %d, want end of file %d", st.Offset, fi.Size())
 	}
 }
+
+// A file that did not exist when the tailer started was created while it was
+// watching: everything in it is new. sbh creates its decision log with its
+// first verdict, and starting that file at its end dropped the verdict.
+func TestFileCreatedAfterStartIsReadFromStart(t *testing.T) {
+	for _, withState := range []bool{true, false} {
+		r := newResumeRig(t)
+		ch := make(chan AuditEvent, 16)
+		tl := NewTailer(r.log, ch)
+		if withState {
+			tl.SetStateFile(r.state)
+		}
+		opened := make(chan OpenInfo, 4)
+		tl.OnOpen(func(i OpenInfo) { opened <- i })
+		go tl.Run()
+
+		time.Sleep(700 * time.Millisecond) // at least one poll finds no file
+		writeLine(t, r.log, `{"seq":1}`)   // the creator's first line
+		writeLine(t, r.log, `{"seq":2}`)
+
+		var o OpenInfo
+		select {
+		case o = <-opened:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("withState=%v: tailer never opened the file", withState)
+		}
+		if o.Mode != "created" || o.From != 0 {
+			t.Fatalf("withState=%v: open = %+v, want mode created from 0", withState, o)
+		}
+		got := consume(t, tl, ch, 2)
+		tl.Stop()
+		tl.Flush()
+		if !equalInts(seqs(got), []int{1, 2}) {
+			t.Fatalf("withState=%v: got %v, want [1 2]", withState, seqs(got))
+		}
+	}
+}
