@@ -6,6 +6,9 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- **Drift no longer reports Linux kernel threads as new processes.** Kernel threads (children of `kthreadd`, PID 2) rename themselves after the work queue they serve (`kworker/0:1-events` → `kworker/0:1-mm_percpu_wq`), so the name-based process check reported 20–25 "new processes" every 30 seconds on an idle machine and buried real ones. Genesis and drift now share one process list (`genesis.ProcNames`) that skips kernel threads on Linux. Existing genesis snapshots need no change: their recorded kernel-thread names simply stop being compared.
+
 ### Security
 - Published `verify`, `prove`, and `audit` commands can now pin local tree-head signing keys with repeatable `--pubkey HEX` and `--pubkey-file PATH` flags. Pins require a valid signature by an accepted key, rejecting attacker-key substitutions and unsigned heads. Without flags, legacy behavior remains with an explicit signer-not-pinned notice. No log format changes.
 
