@@ -62,7 +62,7 @@ var feedSourceRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,31}$`)
 
 // reservedSources are written by the witness itself or its built-in bridges; a
 // feed using one could pass its lines off as theirs.
-var reservedSources = map[string]bool{"witness": true, "witness-init": true, "sbh": true, "farm": true, "pipelock": true, "drift": true, "migrate": true, "pd": true, "pd-system": true, "mirror": true, "enforcer": true, "anomaly": true}
+var reservedSources = map[string]bool{"witness": true, "witness-init": true, "sbh": true, "farm": true, "pipelock": true, "drift": true, "migrate": true, "pd": true, "pd-system": true, "mirror": true, "enforcer": true, "anomaly": true, "operator": true}
 
 // ValidateEventFeeds rejects a feed list a reader of the log could be misled
 // by: an empty path, a malformed, reserved or repeated source, or one file

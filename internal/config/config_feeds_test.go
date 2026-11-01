@@ -22,4 +22,8 @@ func TestValidateEventFeeds(t *testing.T) {
 			t.Errorf("%v: got %v, want %q", feeds, err, want)
 		}
 	}
+	// "operator" records drift approvals; a feed claiming it could forge one.
+	if err := (&Config{EventFeeds: []EventFeed{{"/x", "operator"}}}).ValidateEventFeeds(); err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Errorf("source operator: got %v, want reserved", err)
+	}
 }
