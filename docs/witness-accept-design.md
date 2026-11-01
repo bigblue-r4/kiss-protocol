@@ -1,6 +1,6 @@
 # Design: `witness accept` — approving known drift
 
-Status: **DRAFT, awaiting decisions (§6).** Nothing here is built.
+Status: **BUILT** (`internal/accept`, `cmd/witness/accept.go`). Decisions in §6 were taken as recommended (2026-11-01). §7 is how to use it.
 
 ## 1. Problem
 
@@ -74,8 +74,9 @@ itself:
    `<primary>/accept-spool/<timestamp>.json` (mode 0600, owned by the witness
    user).
 3. On the next tick, the daemon checks each request's signature against the
-   **operator allowlist** (the same `soul` allowlist `witness soul sign`
-   writes), appends `drift_accepted` (or `drift_accept_rejected` with the
+   **operator allowlist**, `~/.witness/trust/operators.txt` (same format as the
+   soul allowlist, but a separate file: an operator key approves drift, it does
+   not sign tree heads), appends `drift_accepted` (or `drift_accept_rejected` with the
    reason, WARN), adds the items to its in-memory set, and deletes the
    request file.
 4. `witness accept` waits up to one tick for the entry to appear and prints
@@ -86,18 +87,20 @@ itself:
 `drift.Measure` is unchanged. The daemon filters its result against the
 approval set:
 
-- Unapproved changes left → `DRIFT drift_detected` with only those, plus
-  `"accepted": N` (count of suppressed items) so the record still shows that
-  approved differences exist.
-- Nothing left → `INFO drift_clean` with `"accepted": N`.
+- Unapproved changes left → `DRIFT drift_detected` with only those. Its data
+  stays a plain list of changes, so existing readers of the log keep working.
+- Nothing left → `INFO drift_clean` with `{"approved": N}` (data stays empty
+  when nothing is approved).
 
 So the approved drift never disappears from the record, it is just stated as
 "N known, approved" instead of re-listed.
 
 ### 3.5 Revoking
 
-`witness accept --revoke <seq>` → `drift_accept_revoked` entry naming the
-earlier seq; replay drops those items. Same spool path, same signature check.
+`witness accept revoke <id>` → `drift_accept_revoked` entry naming the
+approval's id; replay drops those items. (Approvals are named by a random id,
+not a log seq: other feeds append concurrently, so the seq of an entry is not
+known to the writer.) Same spool path, same signature check.
 
 ## 4. Threat notes
 
@@ -119,7 +122,7 @@ replay + filter in `main.go`, an `internal/accept` package for the matcher and
 request signing/verification, tests for matching, replay, revoke, bad
 signatures and the hash-pin property. Similar in size to `export`.
 
-## 6. Decisions needed (Chris)
+## 6. Decisions (taken as recommended, 2026-11-01)
 
 1. **Who can approve?** (a) Any key in the operator allowlist. On the test box
    that is the witness's own software key, so anyone who can act as the
@@ -132,3 +135,29 @@ signatures and the hash-pin property. Similar in size to `export`.
    (e.g. 90 days) so stale approvals resurface? *Recommendation: forever +
    revoke; expiry is easy to add later.*
 4. OK to include **revoke** in the first version, or ship accept-only first?
+
+Also built in: the source `operator` is reserved, so an event feed cannot
+write an entry that looks like an approval, and replay re-checks each
+recorded request (signature, machine id, signer in operators.txt), so an
+operator removed from operators.txt loses their approvals at the next start
+(recorded as WARN `drift_accept_replay_skipped`).
+
+## 7. Using it
+
+Once, on a machine that is **not** the witnessed one (the LAB box, a stick):
+
+    witness accept keygen --out operator.key     # prints "operator <hex>"
+
+On the witnessed machine, add that line to the witness user's
+`~/.witness/trust/operators.txt` (as root; `/var/lib/witness/.witness/trust/`
+on a service install).
+
+Then, each time:
+
+    sudo -H -u witness witness accept list                       # numbered drift
+    sudo -H -u witness witness accept request --item 1,3 --reason "snap refresh" --out req.json
+    witness accept sign --key operator.key req.json              # where the key is
+    sudo -H -u witness witness accept submit req.json            # waits for the record
+
+`request ... --key operator.key` signs and submits in one step when the key is
+at hand. `revoke ID --reason ...` takes the same `--key`/`--out`.
