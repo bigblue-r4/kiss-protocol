@@ -43,8 +43,10 @@ func New(cfg *pipelock.Config, s *store.Store) *Bridge {
 	runner := pipelock.NewRunner(cfg)
 	// Forward pipelock's own stderr (startup errors, config rejections, panics)
 	// into the witness log so a misconfiguration is recorded, not silent.
+	// Each line is graded (see stderrLevels) so the startup banner is INFO.
+	levels := &stderrLevels{}
 	runner.SetStderrSink(func(line string) {
-		_ = s.Append("WARN", "pipelock_stderr", "pipelock",
+		_ = s.Append(levels.level(line), "pipelock_stderr", "pipelock",
 			map[string]interface{}{"message": line})
 	})
 	b := &Bridge{
