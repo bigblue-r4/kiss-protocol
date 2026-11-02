@@ -11,6 +11,7 @@ import (
 )
 
 // cmdVerify walks the entire Merkle log and reports the first inconsistency.
+// It only reads (store.OpenPinned), so it is safe while the daemon runs.
 //
 // Exit codes:
 //
@@ -37,9 +38,9 @@ func cmdVerify() {
 		os.Exit(1)
 	}
 	defer s.Close()
-	if r := s.Recovered(); r.Bytes > 0 {
-		fmt.Printf("NOTE  the log ended in an interrupted write: %d byte(s) (%d uncommitted record(s)) moved to %s\n",
-			r.Bytes, r.UncommittedRecords, r.QuarantineFile)
+	if u := s.Uncovered(); u.Bytes > 0 {
+		fmt.Printf("NOTE  %d record(s), %d byte(s) after the signed head were not checked: written since the head was read, or an interrupted write (the witness moves that aside when it next starts)\n",
+			u.Records, u.Bytes)
 	}
 
 	n, err := s.VerifyIntegrity()
