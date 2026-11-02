@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
@@ -276,19 +277,23 @@ func TestPinnedRejectsInvalidSignature(t *testing.T) {
 	}
 }
 
-func TestPinnedCrashTailRecovery(t *testing.T) {
+func TestPinnedLeavesCrashTailInPlace(t *testing.T) {
 	witness := newTestDevSigner(t)
 	dir := signedLog(t, witness)
 	appendRaw(t, dir, []byte{0, 0})
+	before, _ := os.ReadFile(logPath(dir))
 	st, err := OpenPinned(dir, testKey(), []ed25519.PublicKey{witness.PublicKey()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if st.Recovered().Bytes != 2 {
-		t.Fatalf("recovery: %+v", st.Recovered())
+	if st.Recovered().Bytes != 0 || st.Uncovered() != (Uncovered{Records: 0, Bytes: 2}) {
+		t.Fatalf("recovered %+v, uncovered %+v", st.Recovered(), st.Uncovered())
 	}
 	if n, err := st.VerifyIntegrity(); err != nil || n != 3 {
 		t.Fatalf("%d, %v", n, err)
+	}
+	if after, _ := os.ReadFile(logPath(dir)); !bytes.Equal(before, after) {
+		t.Fatal("a read-only open changed the log")
 	}
 }

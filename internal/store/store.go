@@ -89,7 +89,9 @@ type Store struct {
 	// signature (see OpenedWithUnsignedHead).
 	unsignedHead bool
 	recovered    Recovery
-	last         Entry // the newest record, for Last
+	readOnly     bool      // opened by OpenPinned: never writes
+	uncovered    Uncovered // OpenPinned: what follows the covered records
+	last         Entry     // the newest record, for Last
 	hasLast      bool
 	seq          uint64
 	leaves       [][32]byte
@@ -113,11 +115,98 @@ func OpenTrusting(dir string, key []byte, s signer.Signer, trusted []ed25519.Pub
 	return openStore(dir, key, s, trusted, nil)
 }
 
-// OpenPinned opens for verification without a signer. Non-empty pins require a
-// signed head from one of those keys. Empty pins preserve Open(dir, key, nil).
-// Like Open, it may quarantine a crash tail; it does not provide a signing key.
+// OpenPinned opens the log read-only for verification (verify, prove, audit).
+// Non-empty pins require a signed head from one of those keys; empty pins
+// check the MAC and any signature as Open(dir, key, nil) does.
+//
+// It never changes the files, so it is safe while the witness daemon is
+// appending. It reads the head first and then the log, and verifies the
+// records the head covers. Records after them (appended since the head was
+// read, or an interrupted write) are not verified and not moved: they are
+// reported by Uncovered. Only the daemon's Open moves a crash tail aside. The
+// returned store cannot Append.
 func OpenPinned(dir string, key []byte, pinned []ed25519.PublicKey) (*Store, error) {
-	return openStore(dir, key, nil, nil, pinned)
+	v, err := readCommitted(dir, key, pinned)
+	if err != nil {
+		return nil, fmt.Errorf("store: tree head integrity: %w", err)
+	}
+	st := &Store{dir: dir, key: key, pinned: pinned, readOnly: true, uncovered: v.uncovered, leaves: v.leaves}
+	if n := len(v.entries); n > 0 {
+		st.last, st.hasLast, st.seq = v.entries[n-1], true, v.entries[n-1].Seq
+	}
+	return st, nil
+}
+
+// readOnlyAttempts bounds the retries when the head covers more records than
+// the log read after it holds (the daemon replacing a crash tail at start).
+const readOnlyAttempts = 5
+
+// committedLog is the log as covered by its stored head.
+type committedLog struct {
+	entries   []Entry
+	leaves    [][32]byte
+	uncovered Uncovered
+}
+
+// readCommitted reads the stored head, then the log, and verifies the head
+// against the records it covers. Reading the head first is what makes this
+// safe beside a running writer: records reach the log before the head that
+// covers them, so the log read afterwards holds at least head.Size records,
+// and those can no longer change.
+func readCommitted(dir string, key []byte, pinned []ed25519.PublicKey) (committedLog, error) {
+	path := filepath.Join(dir, logFilename)
+	var lastErr error
+	for i := 0; i < readOnlyAttempts; i++ {
+		if i > 0 {
+			time.Sleep(50 * time.Millisecond)
+		}
+		head, headErr := readStoredHead(dir)
+		if headErr != nil && !os.IsNotExist(headErr) {
+			return committedLog{}, headErr
+		}
+		entries, ends, _, size, err := readLog(path, key)
+		if err != nil {
+			return committedLog{}, err
+		}
+		if os.IsNotExist(headErr) {
+			// No head: fine for an empty log only (verifyTreeHead says why).
+			if len(entries) > 0 {
+				lastErr = ErrMissingTreeHead
+				continue
+			}
+			if err := verifyTreeHead(dir, key, nil, nil, pinned, nil); err != nil {
+				return committedLog{}, err
+			}
+			return committedLog{uncovered: Uncovered{Bytes: size}}, nil
+		}
+		if uint64(len(entries)) < head.Size {
+			lastErr = fmt.Errorf("tree head size mismatch: stored %d, log has %d", head.Size, len(entries))
+			continue
+		}
+		entries = entries[:head.Size]
+		leaves := make([][32]byte, len(entries))
+		for j, e := range entries {
+			leaves[j] = leafHash(e)
+		}
+		if err := checkTreeHead(head, key, nil, nil, pinned, leaves); err != nil {
+			return committedLog{}, err
+		}
+		var cut int64
+		if len(entries) > 0 {
+			cut = ends[len(entries)-1]
+		}
+		u := Uncovered{Records: len(ends) - len(entries), Bytes: size - cut}
+		return committedLog{entries: entries, leaves: leaves, uncovered: u}, nil
+	}
+	return committedLog{}, lastErr
+}
+
+// Uncovered describes what a read-only open found after the records the
+// stored head covers: records the daemon appended after the head was read, or
+// the tail of an interrupted write. Nothing there is verified.
+type Uncovered struct {
+	Records int   // complete, readable records
+	Bytes   int64 // all bytes after the covered records, those included
 }
 
 func openStore(dir string, key []byte, s signer.Signer, trusted, pinned []ed25519.PublicKey) (*Store, error) {
@@ -219,6 +308,10 @@ func (s *Store) Last() (Entry, bool) {
 	return s.last, s.hasLast
 }
 
+// Uncovered reports what OpenPinned found after the records the head covers
+// (zero for Open, which moves a crash tail aside instead; see Recovered).
+func (s *Store) Uncovered() Uncovered { return s.uncovered }
+
 // Recovered reports a crash tail found and moved aside by Open (zero if none).
 // The caller should record it: the log is intact up to its signed head, and
 // the quarantined bytes are evidence of the interrupted write.
@@ -250,6 +343,9 @@ func (s *Store) OpenedWithUnsignedHead() bool {
 func (s *Store) Append(level, event, source string, data interface{}) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.readOnly {
+		return errors.New("store: opened read-only for verification")
+	}
 
 	s.seq++
 	// Sanitize string fields to valid UTF-8 so json.Marshal produces a stable
@@ -298,7 +394,9 @@ func (s *Store) Append(level, event, source string, data interface{}) error {
 func (s *Store) Snapshot() ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_ = s.f.Sync()
+	if s.f != nil {
+		_ = s.f.Sync()
+	}
 	return os.ReadFile(filepath.Join(s.dir, logFilename))
 }
 
@@ -306,6 +404,9 @@ func (s *Store) Snapshot() ([]byte, error) {
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.f == nil {
+		return nil
+	}
 	_ = s.f.Sync()
 	return s.f.Close()
 }
@@ -329,9 +430,20 @@ func (s *Store) Head() TreeHead {
 
 // VerifyIntegrity decrypts all entries, rebuilds the Merkle tree, and checks
 // the stored tree head. Returns the number of verified leaves and any error.
+//
+// On a read-only store (OpenPinned) it reads the head and log again the same
+// safe way and checks the records the head now covers.
 func (s *Store) VerifyIntegrity() (uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.readOnly {
+		v, err := readCommitted(s.dir, s.key, s.pinned)
+		if err != nil {
+			return 0, err
+		}
+		return uint64(len(v.leaves)), nil
+	}
 
 	entries, err := ReadAll(s.dir, s.key)
 	if err != nil {
@@ -359,6 +471,11 @@ func (s *Store) InclusionProof(index uint64) (merkle.Proof, Entry, error) {
 	entries, err := ReadAll(s.dir, s.key)
 	if err != nil {
 		return merkle.Proof{}, Entry{}, err
+	}
+	// Prove against the records this store holds (for OpenPinned, those the
+	// head covered), not any appended since, so the proof matches Head.
+	if len(entries) > len(s.leaves) {
+		entries = entries[:len(s.leaves)]
 	}
 	if index >= uint64(len(entries)) {
 		return merkle.Proof{}, Entry{}, fmt.Errorf("index %d out of range (log has %d entries)", index, len(entries))
@@ -529,7 +646,12 @@ func verifyTreeHead(dir string, key []byte, s signer.Signer, trusted, pinned []e
 	if err := json.Unmarshal(data, &head); err != nil {
 		return fmt.Errorf("parse tree head: %w", err)
 	}
+	return checkTreeHead(head, key, s, trusted, pinned, leaves)
+}
 
+// checkTreeHead checks head against leaves: root, size, MAC, and signature
+// (with the signer rules of verifyTreeHead).
+func checkTreeHead(head TreeHead, key []byte, s signer.Signer, trusted, pinned []ed25519.PublicKey, leaves [][32]byte) (verifyErr error) {
 	if len(pinned) > 0 {
 		defer func() {
 			if verifyErr != nil {
