@@ -35,6 +35,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bigblue-r4/kiss-protocol/internal/accept"
 	"github.com/bigblue-r4/kiss-protocol/internal/anomaly"
 	"github.com/bigblue-r4/kiss-protocol/internal/config"
 	"github.com/bigblue-r4/kiss-protocol/internal/death"
@@ -84,6 +85,8 @@ func main() {
 		cmdSoul()
 	case "audit":
 		cmdAudit()
+	case "accept":
+		cmdAccept()
 	case "watchdog":
 		cmdWatchdog()
 	case "version", "--version", "-v":
@@ -110,6 +113,8 @@ Usage:
   witness migrate [src-dir]       Import v1 log into v2 Merkle log (one-shot)
   witness soul sign [--dev]       Sign the soul file with the configured signer
   witness soul verify             Verify soul file signature against allowlist
+  witness accept <list|request|sign|submit|revoke|keygen>
+                                  Approve known drift (run 'witness accept' for help)
   witness audit [--max-lag N] [--pubkey HEX] Compare local Merkle log to transparency mirror
   witness version                 Print version
 
@@ -516,6 +521,72 @@ func cmdStart() {
 	}
 	tryPushMirror()
 
+	// ── Operator approvals of known drift (witness accept) ────────────────
+	// Rebuilt from the log; every recorded request's signature is checked
+	// again. Requests arrive as signed files in the spool and are applied on
+	// the drift tick (docs/witness-accept-design.md).
+	loadAcceptPolicy := func() accept.Policy {
+		p := accept.Policy{MachineID: mid, AllowOwn: devMode}
+		if signerInst != nil {
+			p.Own = signerInst.PublicKey()
+		}
+		path := accept.OperatorsPath(witnessDir())
+		if _, err := os.Stat(path); err == nil {
+			ops, err := soul.LoadAllowlist(path)
+			if err != nil {
+				warn("operator allowlist: %v — no operator can approve drift", err)
+			} else {
+				p.Operators = ops
+			}
+		}
+		return p
+	}
+	approvals := accept.NewSet()
+	if entries, err := store.ReadAll(cfg.PrimaryDir, key); err != nil {
+		warn("could not replay drift approvals: %v", err)
+	} else {
+		var skipped int
+		approvals, skipped = accept.Replay(entries, loadAcceptPolicy())
+		if n := len(approvals.Approvals()); n > 0 {
+			fmt.Printf("[witness] Drift approvals active: %d\n", n)
+		}
+		if skipped > 0 {
+			warn("%d recorded drift approval(s) no longer pass (signer not trusted now?) — not applied", skipped)
+			_ = s.Append("WARN", "drift_accept_replay_skipped", "witness", map[string]int{"skipped": skipped})
+		}
+	}
+	if err := os.MkdirAll(accept.SpoolDir(cfg.PrimaryDir), 0700); err != nil {
+		warn("create accept spool: %v", err)
+	}
+	processAcceptSpool := func() {
+		pending, err := accept.ReadSpool(cfg.PrimaryDir)
+		if err != nil {
+			warn("%v", err)
+			return
+		}
+		if len(pending) == 0 {
+			return
+		}
+		p := loadAcceptPolicy()
+		for _, pr := range pending {
+			file := filepath.Base(pr.File)
+			err := pr.Err
+			label := ""
+			if err == nil {
+				label, err = approvals.Apply(pr.Request, p)
+			}
+			if err != nil {
+				_ = s.Append("WARN", accept.EventRejected, accept.Source, accept.RejectedData(file, pr.Request, err))
+				warn("drift approval %s rejected: %v", file, err)
+			} else {
+				event, data := accept.EntryFor(pr.Request, label)
+				_ = s.Append("INFO", event, accept.Source, data)
+				fmt.Printf("[witness] %s %s by %s: %s\n", event, pr.Request.ID, label, pr.Request.Reason)
+			}
+			_ = os.Remove(pr.File)
+		}
+	}
+
 	driftTick := time.NewTicker(time.Duration(cfg.DriftIntervalSec) * time.Second)
 	defer driftTick.Stop()
 
@@ -552,14 +623,20 @@ func cmdStart() {
 			}
 
 		case <-driftTick.C:
+			processAcceptSpool()
 			changes, err := drift.Measure(snap)
 			if err != nil {
 				_ = s.Append("ERROR", "drift_check_error", "drift", map[string]string{"err": err.Error()})
 				continue
 			}
-			if len(changes) > 0 {
-				_ = s.Append("DRIFT", "drift_detected", "drift", changes)
-				fmt.Printf("[witness] Drift: %d change(s) detected\n", len(changes))
+			// drift_detected lists only changes no approval covers; the
+			// approved ones are counted on drift_clean.
+			unapproved, approved := approvals.Filter(changes)
+			if len(unapproved) > 0 {
+				_ = s.Append("DRIFT", "drift_detected", "drift", unapproved)
+				fmt.Printf("[witness] Drift: %d change(s) detected (%d approved)\n", len(unapproved), approved)
+			} else if approved > 0 {
+				_ = s.Append("INFO", "drift_clean", "drift", map[string]int{"approved": approved})
 			} else {
 				_ = s.Append("INFO", "drift_clean", "drift", nil)
 			}
