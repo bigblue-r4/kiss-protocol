@@ -16,7 +16,8 @@ import (
 
 const broadcastDeadline = 8 * time.Second
 
-// Hash describes a whole captured file prefix, never a digest of a partial read.
+// Hash describes a completed range digest or an explicit failure/incomplete status.
+// Segment-mode LogHash carries status only; the segment digest has its own field.
 type Hash struct {
 	Status string `json:"status"` // complete, incomplete (deadline), or error
 	SHA256 string `json:"sha256,omitempty"`
@@ -25,15 +26,26 @@ type Hash struct {
 
 // Record preserves the signed head as stored; it does not create a new signature.
 type Record struct {
-	Format        string          `json:"format"`
-	Timestamp     string          `json:"timestamp"`
-	Trigger       string          `json:"trigger"`
-	MachineID     string          `json:"machine_id"`
-	TreeHead      json.RawMessage `json:"tree_head"`
-	TreeHeadError string          `json:"tree_head_error,omitempty"`
-	LogBytes      int64           `json:"log_bytes"` // -1 if stat failed
-	LogHash       Hash            `json:"log_hash"`
-	GenesisHash   Hash            `json:"genesis_hash"`
+	Format         string          `json:"format"`
+	Timestamp      string          `json:"timestamp"`
+	Trigger        string          `json:"trigger"`
+	MachineID      string          `json:"machine_id"`
+	TreeHead       json.RawMessage `json:"tree_head"`
+	TreeHeadError  string          `json:"tree_head_error,omitempty"`
+	LogBytes       int64           `json:"log_bytes"` // -1 if stat failed
+	LogHash        Hash            `json:"log_hash"`
+	GenesisHash    Hash            `json:"genesis_hash"`
+	HashMode       string          `json:"hash_mode,omitempty"`
+	SegmentStart   int64           `json:"segment_start,omitempty"`
+	SegmentSHA256  string          `json:"segment_sha256,omitempty"`
+	ChainSHA256    string          `json:"chain_sha256,omitempty"`
+	TailSHA256     string          `json:"tail_sha256,omitempty"`
+	TailHash       Hash            `json:"tail_hash,omitempty"`
+	PrevRecord     *Reference      `json:"prev_record,omitempty"`
+	SkippedRecords []SkippedRecord `json:"skipped_records,omitempty"`
+	FallbackReason string          `json:"fallback_reason,omitempty"`
+	PrefixChanged  bool            `json:"prefix_changed,omitempty"`
+	LogShrank      bool            `json:"log_shrank,omitempty"`
 }
 
 // Broadcaster writes small, atomic death records in the primary directory.
@@ -57,7 +69,7 @@ func (b *Broadcaster) Fire(trigger string) error {
 }
 
 func (b *Broadcaster) fire(ctx context.Context, trigger string) error {
-	r := Record{Format: "witness-death/1", Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Trigger: trigger, MachineID: b.machineID, LogBytes: -1}
+	r := Record{Format: "witness-death/2", Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Trigger: trigger, MachineID: b.machineID, LogBytes: -1}
 	head, err := os.ReadFile(filepath.Join(b.primaryDir, "tree-head.json"))
 	if err != nil {
 		r.TreeHeadError = err.Error()
@@ -75,8 +87,10 @@ func (b *Broadcaster) fire(ctx context.Context, trigger string) error {
 	r.GenesisHash = hashFile(ctx, filepath.Join(b.primaryDir, "genesis.enc"), -1)
 	if statErr != nil {
 		r.LogHash = Hash{Status: "error", Error: statErr.Error()}
+		r.HashMode = "full"
+		r.TailHash = Hash{Status: "error", Error: statErr.Error()}
 	} else {
-		r.LogHash = hashFile(ctx, logPath, r.LogBytes)
+		b.hashLog(ctx, logPath, &r)
 	}
 	data, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
@@ -88,6 +102,10 @@ func (b *Broadcaster) fire(ctx context.Context, trigger string) error {
 // hashFile uses bounded memory and hashes exactly size bytes (or EOF for size -1).
 // The buffered result lets a cancelled worker finish without blocking or writing.
 func hashFile(ctx context.Context, path string, size int64) Hash {
+	return hashRange(ctx, path, 0, size)
+}
+
+func hashRange(ctx context.Context, path string, start, size int64) Hash {
 	if ctx.Err() != nil {
 		return Hash{Status: "incomplete"}
 	}
@@ -99,6 +117,10 @@ func hashFile(ctx context.Context, path string, size int64) Hash {
 			return
 		}
 		defer f.Close()
+		if _, err := f.Seek(start, io.SeekStart); err != nil {
+			result <- Hash{Status: "error", Error: err.Error()}
+			return
+		}
 		var reader io.Reader = f
 		if size >= 0 {
 			reader = io.LimitReader(f, size)
