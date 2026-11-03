@@ -87,15 +87,19 @@ func Verify(dir, logPath string, out io.Writer) error {
 				fail("invalid log range")
 			} else if r.LogHash.Status == "complete" {
 				h := hashRange(ctx, logPath, start, r.LogBytes-start)
-				if h.Status != "complete" || h.SHA256 != want {
-					fail("log range [%d,%d) SHA-256 mismatch or read failure: %s", start, r.LogBytes, h.Error)
+				if h.Status != "complete" {
+					fail("log range [%d,%d) could not be read (%s): %s", start, r.LogBytes, h.Status, h.Error)
+				} else if h.SHA256 != want {
+					fail("log range [%d,%d) SHA-256 mismatch: log bytes changed since this record", start, r.LogBytes)
 				}
 			}
 			if r.Format == "witness-death/2" && validDigest(r.TailSHA256) {
 				start := tailStart(r.LogBytes)
 				h := hashRange(ctx, logPath, start, r.LogBytes-start)
-				if h.Status != "complete" || h.SHA256 != r.TailSHA256 {
-					fail("tail SHA-256 mismatch or read failure: %s", h.Error)
+				if h.Status != "complete" {
+					fail("tail could not be read (%s): %s", h.Status, h.Error)
+				} else if h.SHA256 != r.TailSHA256 {
+					fail("tail SHA-256 mismatch: log bytes changed since this record")
 				}
 			}
 		}
