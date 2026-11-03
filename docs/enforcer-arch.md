@@ -43,7 +43,7 @@ process that owned the Merkle log write path. This meant:
 
 | Property | Guarantee |
 |---|---|
-| Core never imports enforcer | Enforced by Go module boundaries |
+| Core never imports enforcer | Enforced by `tests/importboundary_test.go` (`go list -deps`); Go itself would allow the import |
 | Enforcer never opens log for writing | TailReader uses store.ReadAll (os.Open, O_RDONLY) |
 | Key derivation is independent | Both derive from machid → encrypt.DeriveKey; no IPC |
 | Enforcer compromise ≠ log corruption | No write handle; no lock ownership |
