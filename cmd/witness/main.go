@@ -73,6 +73,8 @@ func main() {
 		cmdStatus()
 	case "verify":
 		cmdVerify()
+	case "verify-death":
+		cmdVerifyDeath()
 	case "prove":
 		cmdProve()
 	case "export":
@@ -105,6 +107,7 @@ Usage:
   witness start [--dev]           Start the continuous witness daemon
   witness status                  Show current witness status
   witness verify [--pubkey HEX]   Walk Merkle log and verify integrity
+  witness verify-death [--log FILE] <primary-dir> Check death-record links and hashes
   witness prove <index> [--pubkey HEX] Emit inclusion proof for leaf at index
   witness export [--since T] [--until T] [--source S] [--out FILE] [--pubkey HEX]
                                   Write a self-verifying copy of the log (JSON)

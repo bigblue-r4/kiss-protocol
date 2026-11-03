@@ -75,7 +75,7 @@ func TestRecordContentsAndNoCopies(t *testing.T) {
 		t.Fatalf("records: %d", len(rs))
 	}
 	r := rs[0]
-	if r.Format != "witness-death/1" || r.Trigger != "signal_received" || r.MachineID != "machine-7" || r.Timestamp == "" {
+	if r.Format != "witness-death/2" || r.Trigger != "signal_received" || r.MachineID != "machine-7" || r.Timestamp == "" {
 		t.Fatalf("metadata: %+v", r)
 	}
 	var got, want any
