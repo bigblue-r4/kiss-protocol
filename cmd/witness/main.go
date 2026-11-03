@@ -591,7 +591,7 @@ func cmdStart() {
 	defer driftTick.Stop()
 
 	fireDeath := func(reason, detail string) {
-		fmt.Printf("[witness] Death trigger: %s — writing snapshot…\n", reason)
+		fmt.Printf("[witness] Death trigger: %s — writing death record…\n", reason)
 		// Stop everything that writes to the log first, and record the stop
 		// last. bridge.Stop flushes pipelock's own shutdown events into the
 		// log; written before them, the DEATH entry was no longer the last
@@ -603,9 +603,11 @@ func cmdStart() {
 		adet.Stop()
 		_ = s.Append("DEATH", reason, "witness", map[string]string{"detail": detail})
 		_ = s.Close()
-		logData, _ := os.ReadFile(filepath.Join(cfg.PrimaryDir, "witness.log"))
-		broadcaster.Fire(logData, snapEncBytes)
-		fmt.Printf("[witness] Death snapshot written.\n")
+		if err := broadcaster.Fire(reason); err != nil {
+			warn("death record: %v", err)
+		} else {
+			fmt.Printf("[witness] Death record written.\n")
+		}
 	}
 
 	// Unused context to satisfy consistent goroutine API.
@@ -753,9 +755,9 @@ func cmdWatchdog() {
 		}
 	}
 
-	logData, _ := os.ReadFile(filepath.Join(primaryDir, "witness.log"))
-	genesisData, _ := os.ReadFile(filepath.Join(primaryDir, "genesis.enc"))
-	broadcaster.Fire(logData, genesisData)
+	if err := broadcaster.Fire("watchdog_parent_exit"); err != nil {
+		warn("watchdog death record: %v", err)
+	}
 }
 
 // ── soul ──────────────────────────────────────────────────────────────────────
