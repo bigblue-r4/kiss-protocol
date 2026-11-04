@@ -123,6 +123,11 @@ func newEnv(t *testing.T, timeout string) *env {
 	}
 	e.st.Append("INFO", "daemon_start", "witness", nil)
 	t.Cleanup(func() { e.st.Close() })
+	// As docs/event-feeds.md requires in production: create the feed empty
+	// before the witness first watches it. Otherwise whether the witness
+	// reads the gate's first lines depends on who creates the file first.
+	os.MkdirAll(e.path("state"), 0o750)
+	os.WriteFile(e.path("state/gate.jsonl"), nil, 0o640)
 	e.startBridge()
 	return e
 }
@@ -354,6 +359,7 @@ func TestManualEscalatesThenAllows(t *testing.T) {
 // Acceptance 15: an unwritable feed means no tokens.
 func TestFeedUnwritableIssuesNothing(t *testing.T) {
 	e := newEnv(t, "5s")
+	os.Remove(e.path("state/gate.jsonl"))
 	os.MkdirAll(e.path("state/gate.jsonl"), 0o700) // a directory where the feed should be
 	e.start()
 	e.waitFor("synced", func() bool { s := e.status(); return s.Synced && s.Restored })

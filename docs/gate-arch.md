@@ -438,6 +438,11 @@ frontier used by the gate would make it O(log n). Listed under follow-ups.
 
 ## 12. Follow-ups (documented, not built)
 
+- Witness feed tailer: a feed file created between the tailer's failed open
+  and its stat is treated as pre-existing and read from its end, dropping its
+  first lines. Deployment avoids it (create `gate.jsonl` before the witness
+  starts, as event-feeds.md says); fixing the tailer is a witness change.
+  Found by a second Claude session reviewing step 4.
 - `signer.NewPIVSlot(slot)` for a gate key on a hardware token beside a PIV
   witness (C13), built and tested where the PIV module is available.
 
