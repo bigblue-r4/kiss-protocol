@@ -77,6 +77,9 @@ jobs:
       - name: Fuzz gate token decode
         run: go test -run='^$' -fuzz=FuzzDecodeToken -fuzztime=30s ./internal/gate/proto/
 
+      - name: Fuzz gate policy parse
+        run: go test -run='^$' -fuzz=FuzzParse -fuzztime=30s ./internal/gate/policy/
+
       - name: Fuzz gate witness proof
         run: go test -run='^$' -fuzz=FuzzVerify -fuzztime=30s ./pkg/gateenforce/witnessproof/
 
@@ -140,6 +143,9 @@ jobs:
 
       - name: Fuzz gate amount parse
         run: go test -run='^$' -fuzz=FuzzParseAmount -fuzztime=5m ./internal/gate/proto/
+
+      - name: Fuzz gate policy parse
+        run: go test -run='^$' -fuzz=FuzzParse -fuzztime=5m ./internal/gate/policy/
 
       - name: Fuzz gate witness proof
         run: go test -run='^$' -fuzz=FuzzVerify -fuzztime=5m ./pkg/gateenforce/witnessproof/

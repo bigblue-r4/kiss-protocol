@@ -88,6 +88,11 @@ brief relied on them.
 | C17 | Token carries `witness_head` + `witnessed_leaf_index`; the enforcement point checks the inclusion proof | A proof that *some* leaf sits at index i says nothing unless the verifier knows what the leaf is, and the enforcement point never saw the log. | The token carries one optional `witnessed` block: the signed head, the leaf index, the **log entry JSON itself** (the leaf preimage, exactly as the witness hashed it) and the proof. `witnessproof` recomputes the leaf from the entry, checks the proof and head, then checks the entry is source `gate`, event `gate_request`, with this token's `action_hash`. |
 | C18 | `internal/merkle` can verify untrusted proofs | Found by tests and fuzzing in step 1: `merkle.Verify` **panics** on a proof shorter than the tree needs (unchecked index), and `splitPoint` **never returns** for sizes above about 2^62 (int overflow). The witness is not exposed (`witness prove` only checks proofs it just built), but a token is attacker-supplied. | `witnessproof` refuses heads above 2^48 records and proofs of the wrong length before calling `merkle`; regression tests and `FuzzVerify` pin both. Hardening `merkle` itself is listed as a follow-up (a change to a witness package, out of scope here). |
 | C15 | Witness runs as user `witness` | `packaging/witness-service.sh` does, but older USB installs ran it as **root**. | Feed file mode `0640 gate:witness`. With a root witness, root reads it anyway. Documented in gate-ops.md. |
+| C19 | Reason codes cover every deny | A malformed request, or one whose `ts` is far from the gate clock, had no code. | `REQUEST_INVALID` (same name as the gateenforce refusal). `ts` must be within `request_max_skew` (default 5 min) of the gate clock; this bounds C20's memory. Step 3. |
+| C20 | One approval, one action | Nothing stopped the gate issuing **several tokens for one `action_hash`**. Each token has its own `token_id`, so the enforcement point's replay cache passes all of them: one pair of approvals could release the same withdrawal many times. | The gate admits an `action_hash` once. While its reservation is pending or after its token is issued, the same request is denied `REQUEST_REPLAYED`; after a refund (deny, timeout) it may be decided again. Entries are forgotten once the request's `ts` falls outside `request_max_skew`, when the request would be refused anyway. Step 3. A matching `action_hash` replay cache in `gateenforce` would be defence in depth; it is a contract change and is listed under follow-ups. |
+| C21 | Soul escalation: warn / escalate / halt | The brief says what halt does (trip) but not escalate. | At `escalate_at`, every request in a covering scope needs operator approvals (`BREAKER_ESCALATE`, Escalate outcome), automated classes included. It tightens and never allows. Warn is reported only. Step 3. |
+| C22 | Feed-derived events feed "edge learning" | Learning an edge from a feed **loosens** future decisions: a forged feed line (A1) would mark `laptop → wallet-svc` as known before the attack. | Edges are learned only from tokens the gate actually issued (so a new edge needs one approved request) and, in a class's explicit `edge_mode = "learn"`, from the requests themselves, each reported in the decision for the feed. Feeds still tighten. Step 3. |
+| C23 | "Token buckets" per class, principal, destination, asset and global | A refilling token bucket gives no exact bound on what can leave inside a window. | Budgets are **sliding-window sums**: inside any window of the configured length, admitted value never exceeds the cap, which is the property acceptance 2 and 18 assert. Values are exact (`big.Rat`), never floats. Assets carry an operator-set `ref_value` (a constant in the signed policy, never a live price) that weights them in the global budget. Step 3. |
 
 ## 3. Trust model
 
@@ -239,7 +244,29 @@ of step 7 and the commit-wait latency are **measured and reported, not hidden**.
 APPROVAL_INVALID, APPROVAL_EXPIRED, OUTSIDE_ENVELOPE, EVIDENCE_UNHEALTHY,
 CHAIN_UNVERIFIED, ANCHOR_STALE, DRIFT_ON_HOST, ADVISORY_DENY, FIRST_SEEN_EDGE,
 VELOCITY_EXCEEDED, COMMIT_WAIT_TIMEOUT, FEED_WRITE_FAILED, POLICY_INVALID,
-INFLIGHT_LIMIT, REVALIDATION_FAILED`.
+INFLIGHT_LIMIT, REVALIDATION_FAILED,
+REQUEST_INVALID, REQUEST_REPLAYED, BREAKER_ESCALATE` (the last three from C19–C21).
+
+**As built (step 3, `internal/gate/core`).** Steps 1 and 2 short-circuit.
+Step 3 denies outright on a forged or expired approval or a request outside the
+envelope; a missing approval is only *noted* (`NO_ROOT`), and steps 4 and 5 still
+run, so a request that would be denied anyway is denied rather than sent to a
+human. Escalations from step 5 (and C21) are satisfied by the class's
+`approvals_required` valid approvals, for automated classes too. The in-flight
+caps are checked **before** an Escalate answer: a caller already at its cap
+keeps getting `INFLIGHT_LIMIT` and keeps ticking toward a trip even once its
+tick level makes every other answer an escalation (found by the acceptance-22
+test). Denies the caller caused (`APPROVAL_*`, `OUTSIDE_ENVELOPE`,
+`ADVISORY_DENY`, `FIRST_SEEN_EDGE`, `DRIFT_ON_HOST`, `REQUEST_REPLAYED`) tick
+`deny` on its principal and origin host; denies caused by the gate's own state do
+not, so one incident cannot cascade into trips on every caller.
+
+Signals are applied relative to the latest quorum reset covering the request: a
+signal at or before it was in front of the operators who signed the reset, so it
+no longer counts against health, tightening, or re-ticking the breaker. Advisory
+records (SBH, pipelock) apply to the principal named in their data (`principal`
+or `agent`, top level or under `detail`); a record that names nobody applies to
+every principal on the host.
 
 ## 7. Breaker (`internal/gate/breaker`)
 
@@ -257,6 +284,21 @@ INFLIGHT_LIMIT, REVALIDATION_FAILED`.
   was established; `drift_detected` (the classes of the gate's own host);
   `sbh_escalation` (principal); COMMIT_WAIT_TIMEOUT ×N (affected classes);
   INFLIGHT_LIMIT ticks (principal / origin_host); self-check failure.
+- **Which scope each trigger ticks** (fixed in code, so a policy cannot point a
+  noisy trigger at Global):
+
+  | Trigger | Scope ticked | Default weight |
+  |---|---|---|
+  | `chain_unverified`, `self_check` | Global (trips at once) | 10 |
+  | `velocity_exceeded` | the bucket's own scope; the class for class and global buckets | 10 |
+  | `deny`, `inflight_limit` | the caller's principal and origin host | 1, 2 |
+  | `commit_wait_timeout` | the class | 4 |
+  | `sbh_escalation` | the principal named in the record (no tick if none) | 10 |
+  | `drift_detected`, `witness_downtime` (CRITICAL), `witness_death` (no `daemon_start` within `head_max_age`), `mirror_unreachable`, `tree_head_unsigned` | every class (one witness = this host, C7) | 10 |
+
+  `chain_unverified` must weigh at least `halt_at` (policy validation). Signals
+  older than the breaker window never tick, so replaying a day of log at restart
+  cannot re-trip a scope.
 - **On trip:** stop issuing in that scope, bump the epoch, serve the new signed
   Epoch, write `breaker_trip` to the gate feed, then call the `TripAdapter`. The
   adapter is log-only, or an exec hook running an operator-owned script. There
@@ -267,7 +309,11 @@ INFLIGHT_LIMIT, REVALIDATION_FAILED`.
   then writes `breaker_reset`. A nonce is spent once it appears in the gate feed
   or the verified log.
 - **Restart:** see C14. The gate reports `GATE_NOT_SYNCED` until the rebuild
-  finishes.
+  finishes. As built: a scope is open if its newest trip epoch is not below its
+  newest counted reset epoch (a tie stays open); every reset nonce seen anywhere is
+  spent; the epoch is the highest seen; and only a reset that actually closed its
+  scope counts as acknowledging earlier signals. Tick totals are not restored:
+  they only ever lead to a trip, and trips are.
 
 ## 8. Policy (`internal/gate/policy`, `examples/gate-policy.toml`)
 
@@ -287,7 +333,19 @@ and thresholds, assets with `decimals`.
 compromised operator token (A8) could approve a manual-class withdrawal. The
 formats (step 1) carry a list of approvals, and the policy sets a per-class
 `approvals_required` (default 1, **recommended 2 for withdrawals**). The number
-is a policy choice for the operator; no format change is needed either way.
+is a policy choice for the operator; no format change is needed either way. **Decided 2026-11-03: two.** An unset
+`approvals_required` defaults to **2**; a single-approver class must say
+`approvals_required = 1` explicitly. `examples/gate-policy.toml` sets 2 on both
+withdrawal classes. A policy whose `approvals_required` or `reset_quorum`
+exceeds the number of distinct operator keys is refused at load, since every
+request in that class would otherwise escalate forever.
+
+As built, validation also refuses: an automated envelope without an explicit
+destination list (`"*"` is allowed only for approval classes); an automated
+value-moving class without `max_value`, a class budget and a global budget;
+`fail_mode = "open"` on a high-tier class; a token lifetime over 120 s; an asset
+used by a class but not declared; an unknown breaker trigger; and decimal values
+in any form other than plain digits (`1e6` is refused).
 
 ## 9. Process isolation and deployment
 
@@ -321,7 +379,11 @@ Step 2 (LAB box, i3-class 4 threads, Go 1.25, `go test -bench`, 10 runs):
 | Evidence poll, one new record (`ReadSince` + frontier + signature) | **0.46 ms** |
 | First full verify at gate start (bootstrap) | **455 ms** |
 
-To be filled in at build step 5: `/v1/decide` p50/p99 (with and without the
+Step 3 (Intel N95, 4 threads, `BenchmarkDecide`, 20,000 decisions with 10,000
+signals indexed and 1,000 known edges): decision logic (steps 1–6 plus release,
+no fsync, no signing) **p50 9 µs, p99 30 µs**, against the 10 ms target.
+
+To be filled in at build step 5: `/v1/decide` end to end (with and without the
 fsync), and commit-wait latency at the 1 s default poll and at 200 ms.
 
 **Witness-side observation (not changed here):** `store.Append` rewrites the
@@ -339,6 +401,8 @@ frontier used by the gate would make it O(log n). Listed under follow-ups.
   stop swallowing read errors (C5).
 - Gate reading more than one witness (multi-host evidence, C7).
 - A Rust or other-language `gateenforce` port from section 4.
+- `gateenforce`: also cache used `action_hash` values until token expiry, as
+  defence in depth behind C20 (a contract change).
 - Witness `store.Append` is O(n) per record (section 11): keep a frontier instead of rehashing every leaf.
 - Harden `internal/merkle` against untrusted input: bounds-check `Verify`'s path and make `splitPoint` overflow-safe (C18).
 - A domain-separated tree-head signature input in a future log format (C1). This
