@@ -228,9 +228,10 @@ gate reset submit reset.json alice-reset.json bob-reset.json
 
 The daemon requires `reset_quorum` distinct trusted operators, an unused nonce
 and `new_epoch == current epoch + 1`. If another trip advances the epoch, make
-a new reset and collect new signatures. A reset counts only once its record is
-in the verified witness log and the quorum is checked. Check status and signed
-epoch again; reset records cannot silently clear a trip if recording fails.
+a new reset and collect new signatures. An accepted reset applies at once, but
+it survives a restart only once its record is in the verified witness log,
+where the quorum is checked again. If the reset record cannot be written, the
+gate trips again instead of clearing. Check status and signed epoch afterwards.
 Restart reconstructs restrictive state from verified log records and local
 records; it is not a reset mechanism.
 
