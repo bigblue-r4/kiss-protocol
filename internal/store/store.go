@@ -95,7 +95,11 @@ type Store struct {
 	hasLast      bool
 	seq          uint64
 	leaves       [][32]byte
-	f            *os.File
+	// fr is the Merkle frontier of leaves: Append updates the root in
+	// O(log n) instead of rehashing every leaf. Kept in step with leaves
+	// everywhere leaves is set.
+	fr merkle.Frontier
+	f  *os.File
 }
 
 // Open opens or creates the log at dir/witness.log.
@@ -130,7 +134,7 @@ func OpenPinned(dir string, key []byte, pinned []ed25519.PublicKey) (*Store, err
 	if err != nil {
 		return nil, fmt.Errorf("store: tree head integrity: %w", err)
 	}
-	st := &Store{dir: dir, key: key, pinned: pinned, readOnly: true, uncovered: v.uncovered, leaves: v.leaves}
+	st := &Store{dir: dir, key: key, pinned: pinned, readOnly: true, uncovered: v.uncovered, leaves: v.leaves, fr: merkle.NewFrontier(v.leaves)}
 	if n := len(v.entries); n > 0 {
 		st.last, st.hasLast, st.seq = v.entries[n-1], true, v.entries[n-1].Seq
 	}
@@ -291,7 +295,7 @@ func openStore(dir string, key []byte, s signer.Signer, trusted, pinned []ed2551
 		}
 	}
 
-	return &Store{dir: dir, key: key, s: s, trusted: trusted, pinned: pinned, unsignedHead: unsigned, recovered: rec, last: last, hasLast: len(entries) > 0, seq: seq, leaves: leaves, f: f}, nil
+	return &Store{dir: dir, key: key, s: s, trusted: trusted, pinned: pinned, unsignedHead: unsigned, recovered: rec, last: last, hasLast: len(entries) > 0, seq: seq, leaves: leaves, fr: merkle.NewFrontier(leaves), f: f}, nil
 }
 
 // Recovery describes a crash tail removed from the log when it was opened.
@@ -385,9 +389,11 @@ func (s *Store) Append(level, event, source string, data interface{}) error {
 		return err
 	}
 
-	s.leaves = append(s.leaves, leafHash(e))
+	leaf := leafHash(e)
+	s.leaves = append(s.leaves, leaf)
+	s.fr.Push(leaf)
 	s.last, s.hasLast = e, true
-	return writeTreeHead(s.dir, s.key, s.s, s.leaves)
+	return writeTreeHeadRoot(s.dir, s.key, s.s, s.fr.Size(), s.fr.Root())
 }
 
 // Snapshot flushes and returns the raw encrypted log bytes.
@@ -420,9 +426,9 @@ func (s *Store) Path() string {
 func (s *Store) Head() TreeHead {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	root := merkle.Root(s.leaves)
+	root := s.fr.Root()
 	return TreeHead{
-		Size:      uint64(len(s.leaves)),
+		Size:      s.fr.Size(),
 		Root:      hex.EncodeToString(root[:]),
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
@@ -578,8 +584,14 @@ func leafHash(e Entry) [32]byte {
 // prevRoot is the root of the previous tree head, enabling the enforcer and
 // the audit command to verify head chain continuity without re-reading the log.
 func writeTreeHead(dir string, key []byte, s signer.Signer, leaves [][32]byte) error {
-	root := merkle.Root(leaves)
-	mac := computeMAC(key, uint64(len(leaves)), root)
+	return writeTreeHeadRoot(dir, key, s, uint64(len(leaves)), merkle.Root(leaves))
+}
+
+// writeTreeHeadRoot is writeTreeHead for a root the caller already holds
+// (Append keeps it in a merkle.Frontier). The head written is byte-identical
+// to writeTreeHead's for the same leaves.
+func writeTreeHeadRoot(dir string, key []byte, s signer.Signer, size uint64, root [32]byte) error {
+	mac := computeMAC(key, size, root)
 
 	// Read the previous tree head's root for chain linkage.
 	prevRoot := ""
@@ -588,7 +600,7 @@ func writeTreeHead(dir string, key []byte, s signer.Signer, leaves [][32]byte) e
 	}
 
 	head := TreeHead{
-		Size:      uint64(len(leaves)),
+		Size:      size,
 		Root:      hex.EncodeToString(root[:]),
 		PrevRoot:  prevRoot,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -596,7 +608,7 @@ func writeTreeHead(dir string, key []byte, s signer.Signer, leaves [][32]byte) e
 	}
 
 	if s != nil {
-		sigInput := treeHeadSigInput(uint64(len(leaves)), root)
+		sigInput := treeHeadSigInput(size, root)
 		sig, err := s.Sign(sigInput)
 		if err != nil {
 			return fmt.Errorf("sign tree head: %w", err)
