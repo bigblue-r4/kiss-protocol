@@ -1,8 +1,9 @@
 # Gate Architecture: kiss-gate, provenance gate and circuit breaker
 
-> Status: **design (Phase 0)**. Nothing under `cmd/gate`, `internal/gate` or
-> `pkg/gateenforce` exists yet. This document is the contract the build steps
-> follow; section 2 records where the code differs from the original brief.
+> Status: **step 1 built** (wire formats in `internal/gate/proto`, enforcement
+> point in `pkg/gateenforce` + `pkg/gateenforce/witnessproof`). No gate daemon
+> yet. This document is the contract the build steps follow; section 2 records
+> where the code differs from the original brief (C16–C18 found in step 1).
 
 ## 1. What the gate is, and what it is not
 
@@ -83,6 +84,9 @@ brief relied on them.
 | C12 | Policy signed with "the same mechanics as soul sign/verify" | `soul.SignSoul` signs the **raw file bytes**, with no domain separation. | A soul signature and a policy signature would be interchangeable messages. The gate keeps the `SoulSig` JSON envelope and `soul.LoadAllowlist`, but signs `"kiss-gate/policy/1\n" ‖ bytes` in `internal/gate/policy`. Soul code is not changed. |
 | C13 | Gate key via the signer package, PIV preferred | `signer.NewPIV()` hard-codes slot **9a**, which the witness PIV build also uses. | A gate co-located with a PIV witness needs a separate token or a different slot. Step 4 adds an **additive** `signer.NewPIVSlot(slot)` and keeps `NewPIV` as is. The dev/software signers take a key dir, so `/var/lib/gate` just works. |
 | C14 | Restart rebuilds breaker state from the gate's records in the verified log | The gate's own feed lines reach the log with tail latency, so the newest few may not be there yet at a crash. | Rebuild = verified-log records **∪** the local feed file **∪** the local state file, and the most restrictive wins. A trip in the local file but not yet in the log still counts. A reset counts only once it is in the verified log, with its quorum signatures re-checked. |
+| C16 | Formats live in `internal/gate/proto`; `pkg/gateenforce` is the public library | A service in another module cannot name a type from an `internal` package, so it could not build an `ActionRequest` or read a `Token`. | `pkg/gateenforce` re-exports the formats as **type aliases** (`gateenforce.Token = proto.Token`). External code uses the aliases; the layout stays as briefed. |
+| C17 | Token carries `witness_head` + `witnessed_leaf_index`; the enforcement point checks the inclusion proof | A proof that *some* leaf sits at index i says nothing unless the verifier knows what the leaf is, and the enforcement point never saw the log. | The token carries one optional `witnessed` block: the signed head, the leaf index, the **log entry JSON itself** (the leaf preimage, exactly as the witness hashed it) and the proof. `witnessproof` recomputes the leaf from the entry, checks the proof and head, then checks the entry is source `gate`, event `gate_request`, with this token's `action_hash`. |
+| C18 | `internal/merkle` can verify untrusted proofs | Found by tests and fuzzing in step 1: `merkle.Verify` **panics** on a proof shorter than the tree needs (unchecked index), and `splitPoint` **never returns** for sizes above about 2^62 (int overflow). The witness is not exposed (`witness prove` only checks proofs it just built), but a token is attacker-supplied. | `witnessproof` refuses heads above 2^48 records and proofs of the wrong length before calling `merkle`; regression tests and `FuzzVerify` pin both. Hardening `merkle` itself is listed as a follow-up (a change to a witness package, out of scope here). |
 | C15 | Witness runs as user `witness` | `packaging/witness-service.sh` does, but older USB installs ran it as **root**. | Feed file mode `0640 gate:witness`. With a root witness, root reads it anyway. Documented in gate-ops.md. |
 
 ## 3. Trust model
@@ -118,11 +122,17 @@ Decoders reject unknown fields. Every signature input is
 | Type | Fields | Signature / hash |
 |---|---|---|
 | ActionRequest | `v, class, target, asset, amount (decimal string), destination, request_nonce (16 B hex), principal, origin_host, ts` | `action_hash = SHA-256("kiss-gate/action/1\n" ‖ canonical)`. SHA-256 so external HSMs and signers can compute it. BLAKE3 stays inside the Merkle log. |
-| Approval | `v, action_hash, approver_label, expires_at, sig` | operator key over `"kiss-gate/approval/1\n" ‖ …` |
-| Token | `v, token_id (16 B random hex), action_hash, issued_at, expires_at, breaker_epoch, policy_hash, witness_head {size, root, sig, signer_key}, witnessed_leaf_index?, inclusion_proof?, gate_key, sig` | gate key over `"kiss-gate/token/1\n" ‖ …`. Default lifetime 30 s, class max 120 s. **`witness_head.sig` added (C1).** |
-| Epoch | `v, epoch, open_scopes[], issued_at, gate_key, sig` | gate key over `"kiss-gate/epoch/1\n" ‖ …`. Enforcement points cache it for `max_age` (default 10 s). |
+| Approval | `v, action_hash, approver_label, expires_at, sig` | operator key over `"kiss-gate/approval/1\n" ‖ …`. A decide request carries a **list**; the policy's per-class `approvals_required` (default 1) counts distinct operator keys, so two labels for one key count once. |
+| Token | `v, token_id (16 B random hex), action_hash, issued_at, expires_at, breaker_epoch, policy_hash, witnessed? {head {size, root, sig, signer_key}, leaf_index, entry, proof[]}, gate_key, sig` | gate key over `"kiss-gate/token/1\n" ‖ …`. Default lifetime 30 s; a lifetime over 120 s is malformed whatever the signature. **Head signature added (C1); entry carried (C17).** |
+| Epoch | `v, epoch, open_scopes[{kind, value}], issued_at, gate_key, sig` (`open_scopes` is never null; an unknown scope kind freezes everything) | gate key over `"kiss-gate/epoch/1\n" ‖ …`. Enforcement points cache it for `max_age` (default 10 s). |
 | Reset | `v, scope, new_epoch, reason, nonce, ts` + `[]PartialSig{operator_label, sig}` | each operator over `"kiss-gate/reset/1\n" ‖ canonical(Reset)` |
 | Policy signature | `SoulSig` envelope (`algorithm, signer_key, signature, signed_at`) | over `"kiss-gate/policy/1\n" ‖ file bytes` (C12) |
+
+Decoders accept only the canonical encoding (no whitespace, reordered or
+case-folded keys, duplicates, unknown fields or trailing bytes), so one value
+has exactly one accepted spelling. `TestActionHashGolden` pins the
+`action_hash` of a fixed request (cross-checked with `sha256sum`); changing it
+means a format version bump.
 
 `policy_hash = SHA-256(policy file bytes)`. `amount` is a non-negative decimal
 string with no exponent, compared as integers in the asset's smallest unit (the
@@ -135,7 +145,13 @@ key; not expired (with allowed skew); `action_hash` equals the hash of the
 not open in it. For commit-wait classes (`witnessproof`): the inclusion proof of
 `witnessed_leaf_index` checks against `witness_head`, and the head signature
 checks against the **pinned witness key**. Any failure means refuse, and write
-a refusal line to the service's own feed.
+a refusal line to the service's own feed. Refusal codes (stable):
+`TOKEN_INVALID, TOKEN_EXPIRED, ACTION_MISMATCH, TOKEN_REPLAYED, EPOCH_STALE,
+EPOCH_SUPERSEDED, SCOPE_FROZEN, COMMIT_WAIT_MISSING, COMMIT_WAIT_INVALID,
+REQUEST_INVALID`. A token is marked used only after every other check passes,
+so a refusal for a reason that later clears (no epoch yet) does not burn it.
+`UpdateEpoch` refuses an epoch older than the one held, one from an unpinned
+key, and one issued in the future.
 
 ## 5. Evidence view (`internal/gate/evidence`)
 
@@ -259,10 +275,11 @@ in-flight caps, tightening rules and actions, `commit_wait`,
 `witness_drift_interval_sec` (C9), mirror tolerance, quorum M/N, tick weights
 and thresholds, assets with `decimals`.
 
-**Open question for the operator:** the brief has single-signer approvals. One
-compromised operator token (A8) can then approve a manual-class withdrawal. The
-proposal is a per-class `approvals_required` (default 1, recommended 2 for
-withdrawals). Needs a decision before step 1 locks the formats.
+**Approvals per class:** the brief had single-signer approvals, so one
+compromised operator token (A8) could approve a manual-class withdrawal. The
+formats (step 1) carry a list of approvals, and the policy sets a per-class
+`approvals_required` (default 1, **recommended 2 for withdrawals**). The number
+is a policy choice for the operator; no format change is needed either way.
 
 ## 9. Process isolation and deployment
 
@@ -301,5 +318,6 @@ fsync), and commit-wait latency at the 1 s default poll and at 200 ms.
   stop swallowing read errors (C5).
 - Gate reading more than one witness (multi-host evidence, C7).
 - A Rust or other-language `gateenforce` port from section 4.
+- Harden `internal/merkle` against untrusted input: bounds-check `Verify`'s path and make `splitPoint` overflow-safe (C18).
 - A domain-separated tree-head signature input in a future log format (C1). This
   is a witness format change, so it is out of scope here.

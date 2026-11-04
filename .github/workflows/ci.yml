@@ -74,6 +74,12 @@ jobs:
       - name: Fuzz store
         run: go test -fuzz=FuzzAppend -fuzztime=30s ./internal/store/
 
+      - name: Fuzz gate token decode
+        run: go test -run='^$' -fuzz=FuzzDecodeToken -fuzztime=30s ./internal/gate/proto/
+
+      - name: Fuzz gate witness proof
+        run: go test -run='^$' -fuzz=FuzzVerify -fuzztime=30s ./pkg/gateenforce/witnessproof/
+
       - name: Fuzz gossip
         run: go test -fuzz=FuzzDecodePacket -fuzztime=30s ./internal/gossip/
 
@@ -116,3 +122,24 @@ jobs:
 
       - name: Fuzz mirror file backend
         run: go test -fuzz=FuzzFileBackend -fuzztime=5m ./internal/mirror/
+
+      - name: Fuzz gate token decode
+        run: go test -run='^$' -fuzz=FuzzDecodeToken -fuzztime=5m ./internal/gate/proto/
+
+      - name: Fuzz gate action request decode
+        run: go test -run='^$' -fuzz=FuzzDecodeActionRequest -fuzztime=5m ./internal/gate/proto/
+
+      - name: Fuzz gate approval decode
+        run: go test -run='^$' -fuzz=FuzzDecodeApproval -fuzztime=5m ./internal/gate/proto/
+
+      - name: Fuzz gate epoch decode
+        run: go test -run='^$' -fuzz=FuzzDecodeEpoch -fuzztime=5m ./internal/gate/proto/
+
+      - name: Fuzz gate reset decode
+        run: go test -run='^$' -fuzz=FuzzDecodeResetBundle -fuzztime=5m ./internal/gate/proto/
+
+      - name: Fuzz gate amount parse
+        run: go test -run='^$' -fuzz=FuzzParseAmount -fuzztime=5m ./internal/gate/proto/
+
+      - name: Fuzz gate witness proof
+        run: go test -run='^$' -fuzz=FuzzVerify -fuzztime=5m ./pkg/gateenforce/witnessproof/

@@ -89,7 +89,7 @@ issues signed tokens for a short list of high-consequence actions, which a prote
 | Rewrite the witness log (re-signed with any key) | Detected before the next token; Global trip | Pinned witness keys + append-only check against every head the gate has seen |
 | Freeze or kill the witness to blind the gate | High-tier requests denied | Head age on the gate's own clock (`head_max_age`); DEATH/downtime triggers |
 | Serve a stale Epoch to an enforcement point | High tier refused | Signed Epoch with `max_age` |
-| A8 for **one** operator token | Cannot reset a breaker; can approve a manual-class action unless the class requires more approvals | M-of-N reset quorum; per-class `approvals_required` (open question, `docs/gate-arch.md` section 8) |
+| A8 for **one** operator token | Cannot reset a breaker; can approve a manual-class action unless the class requires more approvals | M-of-N reset quorum; per-class `approvals_required` in the signed policy (recommended 2 for withdrawals) |
 | Trip the breaker on purpose (DoS) | **Not prevented.** A trip is an availability lever; scopes are kept as narrow as the trigger | Documented in `docs/gate-ops.md`; Global trips only on chain-integrity or self-check failures |
 | Bypass the enforcement point (a service path that never calls `gateenforce`) | **Out of scope.** The gate protects only what checks its tokens | Deployment requirement |
 

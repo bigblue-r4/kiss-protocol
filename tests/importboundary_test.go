@@ -36,6 +36,13 @@ func listDeps(t *testing.T) map[string][]string {
 	return deps
 }
 
+// isStd reports whether an import path is in the standard library: its first
+// element has no dot (golang.org/x/... and every module path do).
+func isStd(p string) bool {
+	first, _, _ := strings.Cut(p, "/")
+	return !strings.Contains(first, ".")
+}
+
 func under(pkg, prefix string) bool {
 	p := module + "/" + prefix
 	return pkg == p || strings.HasPrefix(pkg, p+"/")
@@ -46,7 +53,11 @@ func under(pkg, prefix string) bool {
 // any command import any internal package of this module.
 //
 //   - the witness (cmd/witness) never links the enforcer or the gate;
-//   - the gate (cmd/gate, internal/gate/...) never links the enforcer.
+//   - the gate (cmd/gate, internal/gate/...) never links the enforcer;
+//   - the enforcement-point library (pkg/gateenforce) and the wire formats
+//     (internal/gate/proto) depend on the standard library only, so protected
+//     services can vendor them cheaply. pkg/gateenforce/witnessproof is the one
+//     exception: it needs BLAKE3 for the witness Merkle tree.
 func TestImportBoundaries(t *testing.T) {
 	deps := listDeps(t)
 	if _, ok := deps[module+"/cmd/witness"]; !ok {
@@ -60,7 +71,18 @@ func TestImportBoundaries(t *testing.T) {
 		{"cmd/gate", []string{"internal/enforcer", "cmd/enforcer", "cmd/witness"}},
 		{"internal/gate", []string{"internal/enforcer", "cmd"}},
 	}
+	stdOnly := []string{"pkg/gateenforce", "internal/gate/proto"}
 	for pkg, ds := range deps {
+		for _, so := range stdOnly {
+			if !under(pkg, so) || under(pkg, "pkg/gateenforce/witnessproof") {
+				continue
+			}
+			for _, d := range ds {
+				if !isStd(d) && !under(d, "internal/gate/proto") {
+					t.Errorf("%s depends on %s: %s must use the standard library only", pkg, d, so)
+				}
+			}
+		}
 		for _, r := range rules {
 			if !under(pkg, r.from) {
 				continue
