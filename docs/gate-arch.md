@@ -1,8 +1,8 @@
 # Gate Architecture: kiss-gate, provenance gate and circuit breaker
 
-> Status: **step 1 built** (wire formats in `internal/gate/proto`, enforcement
-> point in `pkg/gateenforce` + `pkg/gateenforce/witnessproof`). No gate daemon
-> yet. This document is the contract the build steps follow; section 2 records
+> Status: **steps 1–2 built** (wire formats in `internal/gate/proto`, enforcement
+> point in `pkg/gateenforce` + `pkg/gateenforce/witnessproof`, verified evidence
+> view in `internal/gate/evidence`). No gate daemon yet. This document is the contract the build steps follow; section 2 records
 > where the code differs from the original brief (C16–C18 found in step 1).
 
 ## 1. What the gate is, and what it is not
@@ -169,12 +169,20 @@ key, and one issued in the future.
    func ReadSince(dir string, key []byte, off int64, have uint64) (TreeHead, []Entry, int64, error)
    ```
 
-   Tests prove the no-mutation property: identical directory listing, sizes,
-   mtimes and inodes before and after, including with a torn tail present.
+   Built (step 2) as `store.ReadSince(dir, key, off, have)`, plus two pure
+   helpers: `store.LeafHash` and `store.VerifyHeadSignature`, and the sentinels
+   `ErrHeadBehind` / `ErrLogShort`. A separate `readLogFrom` leaves the daemon's
+   `readLog` untouched. Tests prove the no-mutation property (names, modes,
+   sizes, mtimes, inodes and content hashes identical before and after, with an
+   uncovered record and a torn frame present; still works on a read-only
+   directory) and contiguity beside a live writer.
 3. **Accept a head** only if: signed by a pinned key; `Size ≥ lastSize`;
    `Root == Root(cached ‖ new)`; `Size == len(cached) + len(new)`. Anything else
    is `CHAIN_UNVERIFIED` and trips Global. The same size with a different root
-   is a rewrite.
+   is a rewrite. The root is kept incrementally: a frontier of the perfect
+   subtrees on the tree's right edge, O(log n) per record, checked against
+   `merkle.Root` for every size up to 300. The failure is sticky: the view
+   never clears it itself.
 4. **Freshness:** `head_age = now_mono − time the gate first verified a head
    larger than the previous one`. `head.ts` is shown but never trusted (C1).
 5. **Periodic full re-verify** (default every 10 min, and at every start): the
@@ -306,8 +314,21 @@ the existing `piv` build tag.
 
 ## 11. Measurements
 
+Step 2 (LAB box, i3-class 4 threads, Go 1.25, `go test -bench`, 10 runs):
+
+| Operation | 50,000-record log |
+|---|---|
+| Evidence poll, one new record (`ReadSince` + frontier + signature) | **0.46 ms** |
+| First full verify at gate start (bootstrap) | **455 ms** |
+
 To be filled in at build step 5: `/v1/decide` p50/p99 (with and without the
 fsync), and commit-wait latency at the 1 s default poll and at 200 ms.
+
+**Witness-side observation (not changed here):** `store.Append` rewrites the
+head with `merkle.Root` over the whole log on every record, so each append costs
+O(n). Building a 50,000-record log through it took over 10 minutes in a
+benchmark; on a log of a million records each append rehashes all of them. The
+frontier used by the gate would make it O(log n). Listed under follow-ups.
 
 ## 12. Follow-ups (documented, not built)
 
@@ -318,6 +339,7 @@ fsync), and commit-wait latency at the 1 s default poll and at 200 ms.
   stop swallowing read errors (C5).
 - Gate reading more than one witness (multi-host evidence, C7).
 - A Rust or other-language `gateenforce` port from section 4.
+- Witness `store.Append` is O(n) per record (section 11): keep a frontier instead of rehashing every leaf.
 - Harden `internal/merkle` against untrusted input: bounds-check `Verify`'s path and make `splitPoint` overflow-safe (C18).
 - A domain-separated tree-head signature input in a future log format (C1). This
   is a witness format change, so it is out of scope here.
