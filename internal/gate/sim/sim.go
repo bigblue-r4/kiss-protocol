@@ -281,7 +281,9 @@ func (e *Env) Verifier(now func() time.Time) *gateenforce.Verifier {
 func (e *Env) Witnessed(r proto.ActionRequest) bool {
 	h, err := proto.ActionHashHex(r)
 	e.must(err)
-	es, err := store.ReadAll(e.Path("w"), e.logKey)
+	// Only records a signed head covers count: the witness writes the log
+	// before the head, and the gate's Inclusion needs the head.
+	_, es, _, err := store.ReadSince(e.Path("w"), e.logKey, 0, 0)
 	if err != nil {
 		return false
 	}
