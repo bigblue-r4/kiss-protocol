@@ -1,0 +1,126 @@
+# gate-policy.toml: example policy for the kiss-protocol gate.
+#
+# Sign it before use (the gate starts in deny-all on an unsigned, tampered or
+# invalid policy):
+#     gate policy sign /etc/gate/gate-policy.toml
+# The signer's key must be in /etc/gate/trust/operators.txt.
+#
+# Decoding is strict: a misspelt key is an error, not a silent default.
+# Values (max_value, budgets) are decimal strings, never floats.
+
+version = 1
+
+[global]
+# Pinned witness tree-head keys (hex ed25519). Replace with your witness's
+# key: `witness pubkey`.
+witness_keys = ["0000000000000000000000000000000000000000000000000000000000000000"]
+head_max_age = "60s"
+# The witness's drift_interval_sec as deployed. Must be <= head_max_age / 2,
+# or a quiet but healthy witness would look stale.
+witness_drift_interval_sec = 30
+production = true            # mirror_not_configured counts against evidence health
+critical_window = "24h"      # an unacknowledged CRITICAL counts this long
+request_max_skew = "5m"
+reset_quorum = 2             # M operator signatures to close a tripped scope
+
+# Global value-per-window across every asset, in reference units (here USD).
+[global.budget]
+window = "1h"
+max_value = "250000"
+
+# ref_value: an operator-set constant per whole unit, deliberately not a live
+# price feed. Revisit it when you re-sign the policy.
+[assets.BTC]
+decimals = 8
+ref_value = "60000"
+budget = { window = "1h", max_value = "3" }
+
+[assets.ETH]
+decimals = 18
+ref_value = "3000"
+budget = { window = "1h", max_value = "60" }
+
+[assets.USDC]
+decimals = 6
+ref_value = "1"
+
+# Withdrawals a human approves. Two distinct operators must sign each one
+# (approvals_required = 2): one stolen operator key is not enough.
+[classes.withdrawal_manual]
+tier = "high"
+root = "approval"
+approvals_required = 2
+targets = ["wallet-svc"]
+assets = ["BTC", "ETH", "USDC"]
+destinations = ["*"]
+commit_wait = true
+commit_wait_timeout = "10s"
+token_lifetime = "30s"
+budget = { window = "24h", max_value = "2000000" }
+inflight = { class = 4, principal = 1, origin_host = 2 }
+tighten = { lookback = "1h", drift = "deny", sbh = "deny", pipelock = "escalate", first_seen_edge = "escalate" }
+
+# The automated hot wallet: the signed envelope below is the root, so no
+# per-action approval. Escalations (first-seen edge, advisory signals,
+# breaker escalate level) still need two approvals.
+[classes.withdrawal_hot]
+tier = "high"
+root = "automated_envelope"
+approvals_required = 2
+targets = ["wallet-svc"]
+assets = ["BTC", "ETH", "USDC"]
+destinations = ["bc1qexamplecoldstorage0000000000000000000", "0xExampleExchangeDeposit0000000000000000000"]
+max_value = "25000"
+commit_wait = true
+token_lifetime = "30s"
+budget = { window = "1h", max_value = "100000" }
+principal_budget = { window = "1h", max_value = "50000", max_count = 20 }
+destination_budget = { window = "1h", max_value = "75000" }
+tighten = { lookback = "1h", drift = "deny", sbh = "deny", pipelock = "deny", first_seen_edge = "escalate" }
+
+[classes.prod_deploy]
+tier = "high"
+root = "approval"
+approvals_required = 1
+targets = ["deploy-svc"]
+destinations = ["prod"]
+token_lifetime = "120s"
+budget = { window = "1h", max_count = 10 }
+
+[classes.privilege_grant]
+tier = "high"
+root = "approval"
+approvals_required = 2
+targets = ["iam-svc"]
+budget = { window = "24h", max_count = 20 }
+
+[classes.bulk_export]
+tier = "low"
+root = "automated_envelope"
+targets = ["export-svc"]
+destinations = ["s3://example-audit-bucket"]
+fail_mode = "open"           # low tier only: stale evidence is a warning, not a deny
+budget = { window = "24h", max_count = 4 }
+tighten = { edge_mode = "learn" }   # learn mode: new edges are recorded and logged, not escalated
+
+[breaker]
+window = "1h"
+warn_at = 3
+escalate_at = 6
+halt_at = 10
+
+# Trigger weights (0 disables). Defaults shown; the scope each one ticks is
+# fixed in code, and only chain_unverified and self_check can trip Global.
+[breaker.triggers]
+velocity_exceeded = 10
+deny = 1
+chain_unverified = 10
+witness_death = 10
+witness_downtime = 10
+mirror_unreachable = 10
+tree_head_unsigned = 10
+drift_detected = 10
+sbh_escalation = 10
+commit_wait_timeout = 4
+inflight_limit = 2
+self_check = 10

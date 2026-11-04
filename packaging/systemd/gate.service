@@ -1,0 +1,57 @@
+[Unit]
+Description=SGAIL Labs Harborlight Gate — provenance gate and circuit breaker
+After=network.target witness.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=gate
+Group=gate
+SupplementaryGroups=witness
+ExecStart=/usr/local/bin/gate start --config /etc/gate/config.json
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+
+# The witness needs traversal to the gate feed; other users get no access.
+StateDirectory=gate
+StateDirectoryMode=0750
+RuntimeDirectory=gate
+RuntimeDirectoryMode=0750
+UMask=0027
+
+# No capabilities: evidence access comes only from the witness group.
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SecureBits=noroot noroot-locked
+
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/gate /run/gate
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete
+SystemCallErrorNumber=EPERM
+SystemCallFilter=clone3 rseq
+
+Environment=HOME=/var/lib/gate
+
+[Install]
+WantedBy=multi-user.target
