@@ -1,0 +1,11 @@
+{
+  "witness_dir": "/var/lib/witness/.witness/primary",
+  "policy": "/etc/gate/gate-policy.toml",
+  "operators": "/etc/gate/trust/operators.txt",
+  "state_dir": "/var/lib/gate",
+  "key_dir": "/var/lib/gate/key",
+  "socket": "/run/gate/gate.sock",
+  "allowed_uids": [],
+  "poll_interval": "1s",
+  "trip_hook": ""
+}

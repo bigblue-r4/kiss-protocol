@@ -93,6 +93,8 @@ brief relied on them.
 | C21 | Soul escalation: warn / escalate / halt | The brief says what halt does (trip) but not escalate. | At `escalate_at`, every request in a covering scope needs operator approvals (`BREAKER_ESCALATE`, Escalate outcome), automated classes included. It tightens and never allows. Warn is reported only. Step 3. |
 | C22 | Feed-derived events feed "edge learning" | Learning an edge from a feed **loosens** future decisions: a forged feed line (A1) would mark `laptop → wallet-svc` as known before the attack. | Edges are learned only from tokens the gate actually issued (so a new edge needs one approved request) and, in a class's explicit `edge_mode = "learn"`, from the requests themselves, each reported in the decision for the feed. Feeds still tighten. Step 3. |
 | C23 | "Token buckets" per class, principal, destination, asset and global | A refilling token bucket gives no exact bound on what can leave inside a window. | Budgets are **sliding-window sums**: inside any window of the configured length, admitted value never exceeds the cap, which is the property acceptance 2 and 18 assert. Values are exact (`big.Rat`), never floats. Assets carry an operator-set `ref_value` (a constant in the signed policy, never a live price) that weights them in the global budget. Step 3. |
+| C24 | `gate reset sign --scope ... --epoch N` produces a partial | Each operator signing independently would sign different nonces and timestamps, and partials over different messages never add up to a quorum. | `gate reset new` writes the one Reset everybody signs (scope, epoch, reason, a fresh nonce); `gate reset sign RESET` produces each partial; `gate reset submit RESET PARTIAL...` sends the bundle. Step 4. |
+| C25 | Commit-wait: embed the head and the leaf's inclusion proof | `merkle.Prove` rehashes every leaf: about 1.7 s per proof on a million-record log, inside every commit-wait decision. | The evidence view caches the root of every complete aligned subtree (one hash per leaf) and builds RFC 6962 audit paths from it in O(log² n). Checked equal to `merkle.Prove` for every leaf of every tree up to 130 leaves, and accepted by `witnessproof`. Step 4. |
 
 ## 3. Trust model
 
@@ -383,8 +385,12 @@ Step 3 (Intel N95, 4 threads, `BenchmarkDecide`, 20,000 decisions with 10,000
 signals indexed and 1,000 known edges): decision logic (steps 1–6 plus release,
 no fsync, no signing) **p50 9 µs, p99 30 µs**, against the 10 ms target.
 
-To be filled in at build step 5: `/v1/decide` end to end (with and without the
-fsync), and commit-wait latency at the 1 s default poll and at 200 ms.
+Step 4 (same box, `internal/gate/daemon` tests, real witness store and the real
+event-feed bridge tailing the gate feed): one commit-wait decision over the unix
+socket, from request to signed token with inclusion proof, took **237 ms** with
+the gate polling every 50 ms. That is the witness tailer's 200 ms EOF sleep
+plus one poll, as C9 predicted; at the 1 s default poll expect up to about
+1.2 s. A proper p50/p99 at both settings is step 5.
 
 **Witness-side observation (not changed here):** `store.Append` rewrites the
 head with `merkle.Root` over the whole log on every record, so each append costs
@@ -392,7 +398,48 @@ O(n). Building a 50,000-record log through it took over 10 minutes in a
 benchmark; on a log of a million records each append rehashes all of them. The
 frontier used by the gate would make it O(log n). Listed under follow-ups.
 
+## 11a. The daemon as built (step 4)
+
+`internal/gate/daemon` (with `cmd/gate` a thin CLI over it):
+
+- **Socket API** (HTTP over a unix socket, mode 0660, every connection's
+  caller uid checked with `SO_PEERCRED` against the gate's own uid plus
+  `allowed_uids`; off Linux every caller is refused): `POST /v1/decide`
+  (canonical request plus approvals), `GET /v1/epoch` (re-signed on every poll),
+  `GET /v1/status`, `POST /v1/reset` (a canonical quorum bundle). Bodies are
+  capped at 64 KiB and decoded strictly.
+- **Feed records** (all values strings, each fsynced): `gate_start`,
+  `policy_load` / `policy_invalid`, `breaker_restored`, `gate_decision` (every
+  outcome), `gate_request` (the commit-wait leaf), `gate_issued` (key use, written
+  before the token leaves), `gate_edge_learned`, `breaker_trip`,
+  `breaker_reset`, `breaker_reset_rejected`, `gate_stop`. Both issuing writes
+  guard: if either fails, the reservation is refunded and no token leaves. A
+  failed write is sticky; the gate issues nothing until restarted with a
+  working feed.
+- **Startup never refuses**: a missing or invalid policy, missing operators or an
+  unwritable feed leave the gate running in deny-all, saying why in `status`
+  and (where it can) in the feed. Until the first verified poll and the breaker
+  rebuild, every decision is `GATE_NOT_SYNCED`.
+- **Restore** (C14) reads `breaker_trip` / `breaker_reset` records from the
+  verified log (the evidence view keeps these for the life of the process,
+  outside the 24 h signal lookback, so an old reset still counts) and from the
+  local feed file. Tested both ways round: a trip only in the local feed and a
+  trip only in the verified log (local feed deleted) each survive a restart.
+- **State** (`state.json`, 0600, written atomically): retained witness heads and
+  known edges. Neither can loosen the breaker.
+- **Self-check**: the gate key must sign and verify a test message at start;
+  a token that fails to sign trips Global (`self_check`). A reset whose record
+  cannot be written re-trips its scope.
+- **Reload**: SIGHUP, only with a valid signature. A reload cannot re-pin the
+  witness keys; that needs a restart, and the gate says so.
+- **Gate key**: the software signer (`signing.key` in `key_dir`). The PIV slot
+  option (C13) is deferred: the PIV build needs a module this tree does not
+  carry, so the change could not be compiled or tested here.
+
 ## 12. Follow-ups (documented, not built)
+
+- `signer.NewPIVSlot(slot)` for a gate key on a hardware token beside a PIV
+  witness (C13), built and tested where the PIV module is available.
 
 - Enforcer writes gossip peer state (`SILENT` / `PRESUMED_COMPROMISED`) to an
   enforcer-owned feed, so the gate can trip on peer death.

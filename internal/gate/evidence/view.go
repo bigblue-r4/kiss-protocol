@@ -88,6 +88,10 @@ type View struct {
 	signals   []Signal
 	lastSeen  map[string]time.Time // source → newest record timestamp
 	lastEvent map[string]Signal    // source + "\x00" + event → newest record
+
+	lv         levels                 // subtree cache for inclusion proofs
+	requests   map[string]gateRequest // action_hash → verified gate_request
+	gateEvents []Signal               // breaker trips and resets, never pruned
 }
 
 // New returns an unsynced view. The first Poll verifies the whole log.
@@ -110,7 +114,8 @@ func New(cfg Config) (*View, error) {
 	pr := append([]store.TreeHead(nil), cfg.Priors...)
 	sort.Slice(pr, func(i, j int) bool { return pr[i].Size < pr[j].Size })
 	cfg.Priors = pr
-	return &View{cfg: cfg, lastSeen: map[string]time.Time{}, lastEvent: map[string]Signal{}}, nil
+	return &View{cfg: cfg, lastSeen: map[string]time.Time{}, lastEvent: map[string]Signal{},
+		requests: map[string]gateRequest{}}, nil
 }
 
 // Poll reads and verifies whatever the witness appended since the last poll
@@ -201,7 +206,11 @@ func (v *View) accept(head store.TreeHead, leaves [][32]byte, fr frontier, next 
 	if fr.n > uint64(len(v.leaves)) {
 		v.grewAt = now
 	}
+	base := uint64(len(v.leaves))
 	v.leaves = append(v.leaves, leaves...)
+	for _, l := range leaves {
+		v.lv.push(l)
+	}
 	v.fr, v.off, v.head = fr, next, head
 	if len(v.priors) == 0 || now.Sub(v.priorAt) >= priorEvery {
 		v.priors = append(v.priors, head)
@@ -210,7 +219,8 @@ func (v *View) accept(head store.TreeHead, leaves [][32]byte, fr frontier, next 
 			v.priors = v.priors[len(v.priors)-maxPriors:]
 		}
 	}
-	for _, e := range entries {
+	for i, e := range entries {
+		v.indexGate(e, base+uint64(i))
 		v.lastSeen[e.Source] = e.Timestamp
 		kind, keep := classify(e)
 		if !keep {
@@ -222,6 +232,7 @@ func (v *View) accept(head store.TreeHead, leaves [][32]byte, fr frontier, next 
 		v.lastEvent[e.Source+"\x00"+e.Event] = s
 	}
 	v.prune(now)
+	v.pruneRequests(now)
 }
 
 func (v *View) prune(now time.Time) {
