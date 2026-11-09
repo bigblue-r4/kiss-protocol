@@ -111,23 +111,29 @@ func newEnv(t *testing.T, timeout string) *env {
 		e.ops = append(e.ops, s)
 		fmt.Fprintf(&opsTxt, "op%d %s\n", i, hex.EncodeToString(s.PublicKey()))
 	}
-	os.MkdirAll(filepath.Join(root, "etc"), 0o700)
-	os.WriteFile(e.path("etc/operators.txt"), []byte(opsTxt.String()), 0o600)
+	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, e.path("etc/operators.txt"), []byte(opsTxt.String()), 0o600)
 	pol := []byte(fmt.Sprintf(policyTmpl, hex.EncodeToString(e.witness.PublicKey()), timeout))
-	os.WriteFile(e.path("etc/gate-policy.toml"), pol, 0o600)
+	mustWrite(t, e.path("etc/gate-policy.toml"), pol, 0o600)
 	sig, _ := policy.Sign(pol, e.ops[0])
-	os.WriteFile(e.path("etc/gate-policy.toml.sig"), sig, 0o600)
+	mustWrite(t, e.path("etc/gate-policy.toml.sig"), sig, 0o600)
 	e.st, err = store.Open(e.wdir, e.key, e.witness)
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.st.Append("INFO", "daemon_start", "witness", nil)
+	if err := e.st.Append("INFO", "daemon_start", "witness", nil); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { e.st.Close() })
 	// As docs/event-feeds.md requires in production: create the feed empty
 	// before the witness first watches it. Otherwise whether the witness
 	// reads the gate's first lines depends on who creates the file first.
-	os.MkdirAll(e.path("state"), 0o750)
-	os.WriteFile(e.path("state/gate.jsonl"), nil, 0o640)
+	if err := os.MkdirAll(e.path("state"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, e.path("state/gate.jsonl"), nil, 0o640)
 	e.startBridge()
 	return e
 }
@@ -251,7 +257,9 @@ func (e *env) decide(r proto.ActionRequest, apps ...proto.Approval) Decision {
 	}
 	defer resp.Body.Close()
 	var d Decision
-	json.NewDecoder(resp.Body).Decode(&d)
+	if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
+		e.t.Fatal(err)
+	}
 	return d
 }
 
@@ -360,7 +368,10 @@ func TestManualEscalatesThenAllows(t *testing.T) {
 func TestFeedUnwritableIssuesNothing(t *testing.T) {
 	e := newEnv(t, "5s")
 	os.Remove(e.path("state/gate.jsonl"))
-	os.MkdirAll(e.path("state/gate.jsonl"), 0o700) // a directory where the feed should be
+	if err := os.MkdirAll(e.path("state/gate.jsonl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// ^ a directory where the feed should be
 	e.start()
 	e.waitFor("synced", func() bool { s := e.status(); return s.Synced && s.Restored })
 	s := e.status()
@@ -415,7 +426,7 @@ func TestEachIssuingWriteGuards(t *testing.T) {
 // Acceptance 11 at the daemon: an unsigned or tampered policy is deny-all.
 func TestPolicyInvalidDenyAll(t *testing.T) {
 	e := newEnv(t, "5s")
-	os.WriteFile(e.path("etc/gate-policy.toml"), []byte("version = 1\n# edited after signing\n"), 0o600)
+	mustWrite(t, e.path("etc/gate-policy.toml"), []byte("version = 1\n# edited after signing\n"), 0o600)
 	e.start()
 	s := e.status()
 	if s.DenyAllReason != "POLICY_INVALID" || !strings.Contains(s.PolicyError, "POLICY_INVALID") {
@@ -670,5 +681,12 @@ func TestTripDuringCommitWait(t *testing.T) {
 	}
 	if e.d.core.Pending() != 0 {
 		t.Fatal("reservation leaked")
+	}
+}
+
+func mustWrite(t *testing.T, path string, data []byte, mode os.FileMode) {
+	t.Helper()
+	if err := os.WriteFile(path, data, mode); err != nil {
+		t.Fatal(err)
 	}
 }

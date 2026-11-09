@@ -81,7 +81,6 @@ type Daemon struct {
 	epochErr  error
 	pollErr   error
 	pollCh    chan struct{} // closed after every poll, then replaced
-	lastFull  time.Time
 	edgesSeen int
 	priorTop  uint64
 	priorN    int
@@ -131,7 +130,7 @@ func New(cfg Config) (*Daemon, error) {
 	d.core = core.New(core.Config{Breaker: d.br, Evidence: noEvidence{}, Now: cfg.Now})
 	d.core.LearnEdges(st.Edges...)
 	d.edgesSeen = len(st.Edges)
-	d.record("gate_start", "", map[string]string{"gate_key": d.key})
+	_ = d.record("gate_start", "", map[string]string{"gate_key": d.key}) // record logs its own failures
 	d.selfCheck()
 	d.loadPolicy(st.Priors)
 	d.signEpoch()
@@ -189,7 +188,7 @@ func (d *Daemon) loadPolicy(priors []store.TreeHead) {
 	if err != nil {
 		d.polErr = err
 		d.logf("policy not loaded (%v); %s", err, map[bool]string{true: "keeping the previous policy", false: "deny-all"}[d.pol != nil])
-		d.record("policy_invalid", "CRITICAL", map[string]string{"error": err.Error(), "path": d.cfg.PolicyPath})
+		_ = d.record("policy_invalid", "CRITICAL", map[string]string{"error": err.Error(), "path": d.cfg.PolicyPath}) // deny-all either way
 		return
 	}
 	if d.view == nil {
@@ -197,7 +196,7 @@ func (d *Daemon) loadPolicy(priors []store.TreeHead) {
 			Pins: l.Policy.WitnessKeys(), Priors: priors, Now: d.cfg.Now})
 		if verr != nil {
 			d.polErr = fmt.Errorf("%w: evidence view: %v", policy.ErrInvalid, verr)
-			d.record("policy_invalid", "CRITICAL", map[string]string{"error": d.polErr.Error()})
+			_ = d.record("policy_invalid", "CRITICAL", map[string]string{"error": d.polErr.Error()}) // deny-all either way
 			return
 		}
 		d.view = v
@@ -212,7 +211,7 @@ func (d *Daemon) loadPolicy(priors []store.TreeHead) {
 		d.core.SetPolicy(l)
 	}
 	d.pol, d.polErr, d.ops = l, nil, ops
-	d.record("policy_load", "", map[string]string{"policy_hash": l.Hash, "signed_by": l.SignedBy, "path": d.cfg.PolicyPath})
+	_ = d.record("policy_load", "", map[string]string{"policy_hash": l.Hash, "signed_by": l.SignedBy, "path": d.cfg.PolicyPath})
 }
 
 func sameKeys(a, b []ed25519.PublicKey) bool {
@@ -326,7 +325,7 @@ func (d *Daemon) restore(v *evidence.View) {
 	for i, s := range open {
 		names[i] = s.String()
 	}
-	d.record("breaker_restored", "", map[string]string{"epoch": strconv.FormatUint(d.br.EpochNum(), 10),
+	_ = d.record("breaker_restored", "", map[string]string{"epoch": strconv.FormatUint(d.br.EpochNum(), 10),
 		"open_scopes": strings.Join(names, ","), "verified_events": strconv.Itoa(len(verified)), "local_events": strconv.Itoa(len(local))})
 }
 
@@ -339,7 +338,9 @@ func (d *Daemon) recordEvents(evs []breaker.Event) {
 		if e.Scope.Kind == proto.ScopeGlobal {
 			level = "CRITICAL"
 		}
-		d.record(e.Type, level, encodeEvent(e))
+		// Informational: a trip holds in memory even if its feed line fails;
+		// only the issuing writes (gate_request, gate_issued) must succeed.
+		_ = d.record(e.Type, level, encodeEvent(e))
 		if e.Type == breaker.EventTrip {
 			e := e
 			go func() {
@@ -394,13 +395,14 @@ func (d *Daemon) Reset(b proto.ResetBundle) (breaker.Event, error) {
 	}
 	ev, err := d.br.Reset(b, ops, d.cfg.Now())
 	if err != nil {
-		d.record("breaker_reset_rejected", "WARN", map[string]string{"scope": b.Reset.Scope.String(),
+		_ = d.record("breaker_reset_rejected", "WARN", map[string]string{"scope": b.Reset.Scope.String(),
 			"new_epoch": strconv.FormatUint(b.Reset.NewEpoch, 10), "nonce": b.Reset.Nonce, "error": err.Error()})
 		return breaker.Event{}, err
 	}
 	if werr := d.record(ev.Type, "WARN", encodeEvent(*ev)); werr != nil {
 		// self_check is the one trigger allowed on every scope, Global included.
-		d.br.Trip("self_check", b.Reset.Scope, "reset could not be written to the gate feed", d.cfg.Now())
+		// The feed just failed, so the trip event cannot be written either.
+		_, _ = d.br.Trip("self_check", b.Reset.Scope, "reset could not be written to the gate feed", d.cfg.Now())
 		d.signEpoch()
 		return breaker.Event{}, fmt.Errorf("%s: %w", core.FeedWriteFailed, werr)
 	}
@@ -437,7 +439,7 @@ func (d *Daemon) logDecision(req proto.ActionRequest, out Decision) {
 	if out.Outcome != string(core.Allow) {
 		level = "WARN"
 	}
-	d.record("gate_decision", level, map[string]string{
+	_ = d.record("gate_decision", level, map[string]string{
 		"action_hash": out.ActionHash, "outcome": out.Outcome, "reasons": strings.Join(out.Reasons, ","),
 		"detail": out.Detail, "class": req.Class, "principal": req.Principal, "origin_host": req.OriginHost,
 		"target": req.Target, "destination": req.Destination, "asset": req.Asset, "amount": req.Amount,
@@ -455,7 +457,7 @@ func (d *Daemon) Decide(ctx context.Context, req proto.ActionRequest, approvals 
 	cd := c.Decide(req, approvals)
 	d.recordEvents(cd.Events)
 	if len(cd.Learned) > 0 {
-		d.record("gate_edge_learned", "", map[string]string{"edges": strings.Join(cd.Learned, ","), "class": req.Class})
+		_ = d.record("gate_edge_learned", "", map[string]string{"edges": strings.Join(cd.Learned, ","), "class": req.Class})
 	}
 	var out Decision
 	switch cd.Outcome {
@@ -637,7 +639,7 @@ func (d *Daemon) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			d.record("gate_stop", "", nil)
+			_ = d.record("gate_stop", "", nil)
 			return
 		case <-poll.C:
 			d.Poll()

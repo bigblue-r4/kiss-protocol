@@ -363,7 +363,9 @@ func cmdReset(args []string) {
 		parse(fs, args[1:])
 		kind, value, _ := strings.Cut(*scope, ":")
 		n := make([]byte, 16)
-		rand.Read(n)
+		if _, err := rand.Read(n); err != nil {
+			die("reset nonce: %v", err)
+		}
 		r := proto.Reset{V: proto.Version, Scope: proto.Scope{Kind: kind, Value: value}, NewEpoch: *epoch,
 			Reason: *reason, Nonce: hex.EncodeToString(n), TS: proto.FormatTime(time.Now())}
 		if err := r.Validate(); err != nil {

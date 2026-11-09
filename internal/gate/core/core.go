@@ -60,15 +60,6 @@ const (
 	BreakerEscalate    Reason = "BREAKER_ESCALATE" // C21: a covering scope's ticks reached escalate_at
 )
 
-// denyTicks are the deny reasons that count toward the "deny" trigger for the
-// request's principal and origin_host. Denies caused by the gate's own state
-// (not synced, breaker open, evidence) or with their own trigger are not
-// counted, so one incident cannot cascade into trips on every caller.
-var denyTicks = map[Reason]bool{
-	ApprovalInvalid: true, ApprovalExpired: true, OutsideEnvelope: true,
-	AdvisoryDeny: true, FirstSeenEdge: true, DriftOnHost: true, RequestReplayed: true,
-}
-
 // Evidence is the read side of evidence.View the core uses.
 type Evidence interface {
 	Status() evidence.Status

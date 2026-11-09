@@ -92,7 +92,9 @@ func TestInclusionVerifiesWithWitnessproof(t *testing.T) {
 		t.Fatalf("gate events %+v", g)
 	}
 	var d map[string]any
-	json.Unmarshal(g[0].Data, &d)
+	if err := json.Unmarshal(g[0].Data, &d); err != nil {
+		t.Fatal(err)
+	}
 	if d["epoch"] != "1" {
 		t.Fatalf("data %v", d)
 	}

@@ -84,7 +84,7 @@ func (d *Daemon) Serve(ctx context.Context, path string, allowed []int) error {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		srv.Shutdown(sctx)
+		_ = srv.Shutdown(sctx) // Serve returns ErrServerClosed either way
 	}()
 	if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -95,7 +95,7 @@ func (d *Daemon) Serve(ctx context.Context, path string, allowed []int) error {
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v) // status already sent; nothing left to report to
 }
 
 func (d *Daemon) handleDecide(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +142,7 @@ func (d *Daemon) handleEpoch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(raw)
+	_, _ = w.Write(raw)
 }
 
 func (d *Daemon) handleStatus(w http.ResponseWriter, r *http.Request) {

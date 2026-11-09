@@ -106,7 +106,9 @@ func TestTicksLevelsAndHalt(t *testing.T) {
 func TestTicksExpire(t *testing.T) {
 	b := New(cfg())
 	for i := 0; i < 9; i++ {
-		b.Tick("deny", alice, t0)
+		if _, _, err := b.Tick("deny", alice, t0); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, ev, _ := b.Tick("deny", alice, t0.Add(time.Hour+time.Second)); ev != nil {
 		t.Fatal("ticks older than the window must not count")
@@ -162,7 +164,7 @@ func TestUnknownScopeKindFailsClosed(t *testing.T) {
 func TestResetQuorum(t *testing.T) {
 	o, s := operators()
 	b := New(cfg())
-	b.Trip("velocity_exceeded", class, "burst", t0)
+	mustTrip(t, b, "velocity_exceeded", class, "burst")
 	if b.EpochNum() != 1 {
 		t.Fatal("trip must bump the epoch")
 	}
@@ -198,7 +200,7 @@ func TestResetQuorum(t *testing.T) {
 	}
 	// Replay: trip again, then resubmit the same (nonce) bundle re-signed for
 	// the right epoch.
-	b.Trip("velocity_exceeded", class, "burst", t0)
+	mustTrip(t, b, "velocity_exceeded", class, "burst")
 	replay := bundle(t, class, 4, 4, s[1:], []string{"op2", "op3"})
 	if _, err := b.Reset(replay, o, t0); !errors.Is(err, ErrNonceSpent) {
 		t.Fatalf("replayed nonce: %v", err)
@@ -207,8 +209,8 @@ func TestResetQuorum(t *testing.T) {
 
 func TestEpochStatement(t *testing.T) {
 	b := New(cfg())
-	b.Trip("velocity_exceeded", class, "x", t0)
-	b.Trip("deny", alice, "x", t0)
+	mustTrip(t, b, "velocity_exceeded", class, "x")
+	mustTrip(t, b, "deny", alice, "x")
 	e := b.Epoch(t0)
 	if e.Epoch != 2 || len(e.OpenScopes) != 2 || e.OpenScopes[0] != class || e.IssuedAt != proto.FormatTime(t0) {
 		t.Fatalf("epoch %+v", e)
@@ -257,7 +259,7 @@ func TestRestore(t *testing.T) {
 		t.Errorf("epoch = %d, want the highest seen (8)", b.EpochNum())
 	}
 	// The local-only reset's nonce is spent even though it did not count.
-	b.Trip("velocity_exceeded", class, "x", t0)
+	mustTrip(t, b, "velocity_exceeded", class, "x")
 	again := bundle(t, bob, b.EpochNum()+1, 3, s[:2], []string{"op1", "op2"})
 	if _, err := b.Reset(again, o, t0); !errors.Is(err, ErrNonceSpent) {
 		t.Fatalf("nonce from local reset: %v", err)
@@ -293,7 +295,7 @@ func TestAdapters(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "out")
 	script := filepath.Join(dir, "hook.sh")
-	os.WriteFile(script, []byte("#!/bin/sh\nenv | sort > "+out+"\n"), 0o700)
+	mustWrite(t, script, []byte("#!/bin/sh\nenv | sort > "+out+"\n"), 0o700)
 	if err := (ExecHook{Path: script}).OnTrip(context.Background(), ev); err != nil {
 		t.Fatal(err)
 	}
@@ -307,8 +309,22 @@ func TestAdapters(t *testing.T) {
 		t.Error("hook must not inherit the gate's environment")
 	}
 	fail := filepath.Join(dir, "fail.sh")
-	os.WriteFile(fail, []byte("#!/bin/sh\necho nope; exit 3\n"), 0o700)
+	mustWrite(t, fail, []byte("#!/bin/sh\necho nope; exit 3\n"), 0o700)
 	if err := (ExecHook{Path: fail}).OnTrip(context.Background(), ev); err == nil || !strings.Contains(err.Error(), "nope") {
 		t.Fatalf("failing hook: %v", err)
+	}
+}
+
+func mustTrip(t *testing.T, b *Breaker, trigger string, s proto.Scope, why string) {
+	t.Helper()
+	if _, err := b.Trip(trigger, s, why, t0); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustWrite(t *testing.T, path string, data []byte, mode os.FileMode) {
+	t.Helper()
+	if err := os.WriteFile(path, data, mode); err != nil {
+		t.Fatal(err)
 	}
 }

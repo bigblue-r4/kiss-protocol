@@ -121,7 +121,9 @@ func TestLoadFromDisk(t *testing.T) {
 		t.Fatal(err)
 	}
 	opsPath := filepath.Join(dir, "operators.txt")
-	os.WriteFile(opsPath, []byte("# c\nopa "+hex.EncodeToString(s[0].PublicKey())+"\nopb "+hex.EncodeToString(s[1].PublicKey())+"\n"), 0o600)
+	if err := os.WriteFile(opsPath, []byte("# c\nopa "+hex.EncodeToString(s[0].PublicKey())+"\nopb "+hex.EncodeToString(s[1].PublicKey())+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	got, err := LoadOperators(opsPath)
 	if err != nil || len(got) != 2 || got[1].Label != "opb" {
 		t.Fatalf("LoadOperators = %v, %v", got, err)
