@@ -73,6 +73,26 @@ For each attacker capability above, state what Witness guarantees and by what me
 2. **seccomp profile completeness (Phase 3 pre-req):** The generated seccomp profile is derived from observed syscalls during integration tests. The death-broadcast path (parallel file writes, SGAIL HTTP under short deadline) and the watchdog subprocess spawn exercise syscalls that may not appear in happy-path tests. The profile must cover error and shutdown paths before defaulting on — otherwise a kill signal during death-broadcast will cause the daemon to crash instead of completing the broadcast.
 3. **v1 import fidelity (Phase 1 decision):** The existing `internal/store` log is a SHA-256 linear hash chain, not a Merkle tree. v1 entries can be imported as Merkle leaves, but the resulting Merkle root will not match any hash stored in the v1 log — there is no cryptographic continuity, only documentary continuity. The import boundary marker leaf must explicitly state this. Decide whether to document the v1 chain as a separate audit trail or treat the import as a clean-break migration.
 
+## Gate (kiss-gate): prevention for high-consequence actions
+
+The witness above is unchanged: it records and does not prevent. `gate` is a separate binary, user and key that
+issues signed tokens for a short list of high-consequence actions, which a protected service checks with
+`pkg/gateenforce` before acting. See `docs/gate-arch.md`. The rows below are the gate's own claims.
+
+| Attacker can... | Gate guarantees... | Mechanism |
+|---|---|---|
+| A1 on a developer endpoint or an internal service (not the gate host) | No high-tier action executes without a root that host cannot produce | Token required at the enforcement point; roots are operator signatures over `action_hash` or the signed policy envelope, never feed data |
+| A1 on the gate/signer host | **Not prevented.** Root there can forge feeds and use a software gate key. Detection only: witness log + mirror; a PIV gate key keeps the key off disk | Documented honestly; the gate belongs on a host developers cannot reach |
+| Forge or flood feed events (any host whose feed files it can write) | Can only tighten (deny, escalate, trip), never allow or reset | Feed-derived signals are tightening-only by construction |
+| Abuse a compromised service inside an automated envelope | Released value ≤ the policy's window budgets; the class then freezes until a quorum reset | Atomic budget reservation + breaker, no auto-reset |
+| Replay a token, or reuse it for another amount or destination | Refused | `token_id` replay cache; `action_hash` binds the exact request |
+| Rewrite the witness log (re-signed with any key) | Detected before the next token; Global trip | Pinned witness keys + append-only check against every head the gate has seen |
+| Freeze or kill the witness to blind the gate | High-tier requests denied | Head age on the gate's own clock (`head_max_age`); DEATH/downtime triggers |
+| Serve a stale Epoch to an enforcement point | High tier refused | Signed Epoch with `max_age` |
+| A8 for **one** operator token | Cannot reset a breaker; can approve a manual-class action unless the class requires more approvals | M-of-N reset quorum; per-class `approvals_required` in the signed policy (recommended 2 for withdrawals) |
+| Trip the breaker on purpose (DoS) | **Not prevented.** A trip is an availability lever; scopes are kept as narrow as the trigger | Documented in `docs/gate-ops.md`; Global trips only on chain-integrity or self-check failures |
+| Bypass the enforcement point (a service path that never calls `gateenforce`) | **Out of scope.** The gate protects only what checks its tokens | Deployment requirement |
+
 ## Published verifier signer identity
 
 `witness verify`, `prove`, and `audit` accept repeatable `--pubkey HEX` and
