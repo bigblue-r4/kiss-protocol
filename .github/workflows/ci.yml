@@ -58,94 +58,83 @@ jobs:
         run: make verify-reproducible
 
   fuzz-short:
-    name: fuzz (short pass)
+    name: fuzz short (${{ matrix.pkg }} ${{ matrix.target }})
     runs-on: ubuntu-latest
     # Skip fuzz on the nightly schedule — the fuzz-nightly job handles that.
     if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { pkg: ./internal/soul/, target: FuzzLoad }
+          - { pkg: ./internal/store/, target: FuzzAppend }
+          - { pkg: ./internal/gate/proto/, target: FuzzDecodeToken }
+          - { pkg: ./internal/gate/policy/, target: FuzzParse }
+          - { pkg: ./pkg/gateenforce/witnessproof/, target: FuzzVerify }
+          - { pkg: ./internal/gossip/, target: FuzzDecodePacket }
+          - { pkg: ./internal/mirror/, target: FuzzPushJSON }
+          - { pkg: ./internal/merkle/, target: FuzzVerifyAdversarial }
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
-      - name: Fuzz soul
-        run: go test -fuzz=FuzzLoad -fuzztime=30s ./internal/soul/
+      - name: Fuzz ${{ matrix.target }}
+        run: bash .github/scripts/fuzz.sh ${{ matrix.pkg }} ${{ matrix.target }} 30s
 
-      - name: Fuzz store
-        run: go test -fuzz=FuzzAppend -fuzztime=30s ./internal/store/
-
-      - name: Fuzz gate token decode
-        run: go test -run='^$' -fuzz=FuzzDecodeToken -fuzztime=30s ./internal/gate/proto/
-
-      - name: Fuzz gate policy parse
-        run: go test -run='^$' -fuzz=FuzzParse -fuzztime=30s ./internal/gate/policy/
-
-      - name: Fuzz gate witness proof
-        run: go test -run='^$' -fuzz=FuzzVerify -fuzztime=30s ./pkg/gateenforce/witnessproof/
-
-      - name: Fuzz gossip
-        run: go test -fuzz=FuzzDecodePacket -fuzztime=30s ./internal/gossip/
-
-      - name: Fuzz mirror
-        run: go test -fuzz=FuzzPushJSON -fuzztime=30s ./internal/mirror/
+      - name: Upload fuzz corpus on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-short-${{ strategy.job-index }}-${{ matrix.target }}
+          path: ${{ matrix.pkg }}testdata/fuzz
+          if-no-files-found: ignore
 
   fuzz-nightly:
-    name: fuzz (nightly long pass)
+    name: fuzz nightly (${{ matrix.pkg }} ${{ matrix.target }})
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { pkg: ./internal/soul/, target: FuzzLoad }
+          - { pkg: ./internal/soul/, target: FuzzHash }
+          - { pkg: ./internal/soul/, target: FuzzVerify }
+          - { pkg: ./internal/soul/, target: FuzzZeroSoulHash }
+          - { pkg: ./internal/store/, target: FuzzAppend }
+          - { pkg: ./internal/store/, target: FuzzReadAll }
+          - { pkg: ./internal/gossip/, target: FuzzDecodePacket }
+          - { pkg: ./internal/gossip/, target: FuzzHeartbeatJSON }
+          - { pkg: ./internal/mirror/, target: FuzzPushJSON }
+          - { pkg: ./internal/mirror/, target: FuzzOpen }
+          - { pkg: ./internal/mirror/, target: FuzzFileBackend }
+          - { pkg: ./internal/gate/proto/, target: FuzzDecodeToken }
+          - { pkg: ./internal/gate/proto/, target: FuzzDecodeActionRequest }
+          - { pkg: ./internal/gate/proto/, target: FuzzDecodeApproval }
+          - { pkg: ./internal/gate/proto/, target: FuzzDecodeEpoch }
+          - { pkg: ./internal/gate/proto/, target: FuzzDecodeResetBundle }
+          - { pkg: ./internal/gate/proto/, target: FuzzParseAmount }
+          - { pkg: ./internal/gate/policy/, target: FuzzParse }
+          - { pkg: ./pkg/gateenforce/witnessproof/, target: FuzzVerify }
+          - { pkg: ./internal/merkle/, target: FuzzProveVerify }
+          - { pkg: ./internal/merkle/, target: FuzzVerifyAdversarial }
+          - { pkg: ./internal/merkle/, target: FuzzHashLeaf }
+          - { pkg: ./internal/merkle/, target: FuzzRoot }
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
-      - name: Fuzz soul
-        run: go test -fuzz=FuzzLoad -fuzztime=5m ./internal/soul/
+      - name: Fuzz ${{ matrix.target }}
+        run: bash .github/scripts/fuzz.sh ${{ matrix.pkg }} ${{ matrix.target }} 5m
 
-      - name: Fuzz soul hash
-        run: go test -fuzz=FuzzHash -fuzztime=5m ./internal/soul/
-
-      - name: Fuzz store append
-        run: go test -fuzz=FuzzAppend -fuzztime=5m ./internal/store/
-
-      - name: Fuzz store read
-        run: go test -fuzz=FuzzReadAll -fuzztime=5m ./internal/store/
-
-      - name: Fuzz gossip decode
-        run: go test -fuzz=FuzzDecodePacket -fuzztime=5m ./internal/gossip/
-
-      - name: Fuzz gossip heartbeat
-        run: go test -fuzz=FuzzHeartbeatJSON -fuzztime=5m ./internal/gossip/
-
-      - name: Fuzz mirror push
-        run: go test -fuzz=FuzzPushJSON -fuzztime=5m ./internal/mirror/
-
-      - name: Fuzz mirror open
-        run: go test -fuzz=FuzzOpen -fuzztime=5m ./internal/mirror/
-
-      - name: Fuzz mirror file backend
-        run: go test -fuzz=FuzzFileBackend -fuzztime=5m ./internal/mirror/
-
-      - name: Fuzz gate token decode
-        run: go test -run='^$' -fuzz=FuzzDecodeToken -fuzztime=5m ./internal/gate/proto/
-
-      - name: Fuzz gate action request decode
-        run: go test -run='^$' -fuzz=FuzzDecodeActionRequest -fuzztime=5m ./internal/gate/proto/
-
-      - name: Fuzz gate approval decode
-        run: go test -run='^$' -fuzz=FuzzDecodeApproval -fuzztime=5m ./internal/gate/proto/
-
-      - name: Fuzz gate epoch decode
-        run: go test -run='^$' -fuzz=FuzzDecodeEpoch -fuzztime=5m ./internal/gate/proto/
-
-      - name: Fuzz gate reset decode
-        run: go test -run='^$' -fuzz=FuzzDecodeResetBundle -fuzztime=5m ./internal/gate/proto/
-
-      - name: Fuzz gate amount parse
-        run: go test -run='^$' -fuzz=FuzzParseAmount -fuzztime=5m ./internal/gate/proto/
-
-      - name: Fuzz gate policy parse
-        run: go test -run='^$' -fuzz=FuzzParse -fuzztime=5m ./internal/gate/policy/
-
-      - name: Fuzz gate witness proof
-        run: go test -run='^$' -fuzz=FuzzVerify -fuzztime=5m ./pkg/gateenforce/witnessproof/
+      - name: Upload fuzz corpus on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-nightly-${{ strategy.job-index }}-${{ matrix.target }}
+          path: ${{ matrix.pkg }}testdata/fuzz
+          if-no-files-found: ignore
