@@ -30,6 +30,22 @@ func Verify(root [32]byte, leafHash [32]byte, proof Proof) error {
 	if proof.Index >= proof.Size {
 		return errors.New("merkle: index out of range in proof")
 	}
+	// Check the exact path length before recompute indexes it. Use unsigned
+	// sizes throughout so untrusted proofs can span the full uint64 range.
+	index, size, depth := proof.Index, proof.Size, 0
+	for size > 1 {
+		k := splitPoint(size)
+		if index < k {
+			size = k
+		} else {
+			index -= k
+			size -= k
+		}
+		depth++
+	}
+	if len(proof.Path) != depth {
+		return errors.New("merkle: invalid proof path length")
+	}
 	if recompute(leafHash, proof.Index, proof.Size, proof.Path) != root {
 		return errors.New("merkle: inclusion proof does not match root")
 	}
@@ -42,7 +58,7 @@ func auditPath(leaves [][32]byte, index, n uint64) [][32]byte {
 	if n == 1 {
 		return nil
 	}
-	k := uint64(splitPoint(int(n)))
+	k := splitPoint(n)
 	if index < k {
 		sibling := subtreeRoot(leaves[k:])
 		return append(auditPath(leaves[:k], index, k), sibling)
@@ -58,7 +74,7 @@ func recompute(h [32]byte, index, size uint64, path [][32]byte) [32]byte {
 	if size == 1 {
 		return h
 	}
-	k := uint64(splitPoint(int(size)))
+	k := splitPoint(size)
 	outer := path[len(path)-1]
 	inner := path[:len(path)-1]
 	if index < k {

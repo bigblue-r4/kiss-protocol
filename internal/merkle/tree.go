@@ -8,7 +8,11 @@
 // strictly less than n, matching RFC 6962 §2.1.
 package merkle
 
-import "lukechampine.com/blake3"
+import (
+	"math/bits"
+
+	"lukechampine.com/blake3"
+)
 
 const (
 	leafPrefix = byte(0x00)
@@ -51,15 +55,14 @@ func subtreeRoot(leaves [][32]byte) [32]byte {
 	case 1:
 		return leaves[0]
 	}
-	k := splitPoint(len(leaves))
+	k := splitPoint(uint64(len(leaves)))
 	return HashNode(subtreeRoot(leaves[:k]), subtreeRoot(leaves[k:]))
 }
 
 // splitPoint returns the largest power of 2 strictly less than n.
-func splitPoint(n int) int {
-	k := 1
-	for k < n {
-		k <<= 1
+func splitPoint(n uint64) uint64 {
+	if n <= 1 {
+		return 0
 	}
-	return k >> 1
+	return uint64(1) << (bits.Len64(n-1) - 1)
 }
