@@ -93,9 +93,13 @@ func TestRootChangesOnTamper(t *testing.T) {
 }
 
 func TestSplitPoint(t *testing.T) {
-	cases := []struct{ n, want int }{
+	cases := []struct{ n, want uint64 }{
 		{2, 1}, {3, 2}, {4, 2}, {5, 4}, {6, 4}, {7, 4}, {8, 4},
 		{9, 8}, {15, 8}, {16, 8}, {17, 16},
+		{0, 0}, {1, 0},
+		{1 << 62, 1 << 61}, {1<<62 + 1, 1 << 62},
+		{1 << 63, 1 << 62}, {1<<63 + 1, 1 << 63},
+		{^uint64(0), 1 << 63},
 	}
 	for _, tc := range cases {
 		got := splitPoint(tc.n)

@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -17,6 +18,7 @@ import (
 	"runtime"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -190,9 +192,32 @@ func (e *Env) Start() {
 		return true
 	})
 	e.Client = &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", e.Path("g.sock"))
+		return dialUnix(ctx, e.Path("g.sock"))
 	}}}
 	e.Gate.Poll()
+}
+
+// dialUnix retries a refused connect for a short while. On macOS a unix-socket
+// connect fails at once with ECONNREFUSED when the listen backlog is full
+// (kern.ipc.somaxconn, 128 by default), where Linux would wait; bursts of
+// concurrent requests from the simulations would otherwise fail spuriously.
+func dialUnix(ctx context.Context, path string) (net.Conn, error) {
+	deadline := time.Now().Add(2 * time.Second)
+	wait := time.Millisecond
+	for {
+		c, err := (&net.Dialer{}).DialContext(ctx, "unix", path)
+		if err == nil || !errors.Is(err, syscall.ECONNREFUSED) || time.Now().After(deadline) {
+			return c, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(wait):
+		}
+		if wait < 50*time.Millisecond {
+			wait *= 2
+		}
+	}
 }
 func (e *Env) Stop() {
 	if e.cancel != nil {

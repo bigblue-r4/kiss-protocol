@@ -86,3 +86,49 @@ func TestProofConsistencyAfterAppend(t *testing.T) {
 		t.Fatalf("proof no longer valid after leaves appended: %v", err)
 	}
 }
+
+func TestVerifyRejectsWrongPathLength(t *testing.T) {
+	leaves := makeLeaves(8)
+	root := Root(leaves)
+	proof, err := Prove(leaves, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for length := 0; length < len(proof.Path); length++ {
+		short := proof
+		short.Path = proof.Path[:length]
+		if err := Verify(root, leaves[3], short); err == nil {
+			t.Fatalf("accepted truncated path of length %d", length)
+		}
+	}
+	proof.Path = append(proof.Path, [32]byte{})
+	if err := Verify(root, leaves[3], proof); err == nil {
+		t.Fatal("accepted extra sibling")
+	}
+	leaf := HashLeaf([]byte("single"))
+	if err := Verify(leaf, leaf, Proof{Size: 1, Path: make([][32]byte, 1)}); err == nil {
+		t.Fatal("accepted a sibling for a single-leaf tree")
+	}
+}
+
+func TestVerifyHugeSizes(t *testing.T) {
+	for _, size := range []uint64{1<<62 + 1, 1 << 63, 1<<63 + 1, ^uint64(0)} {
+		leaf := HashLeaf([]byte("leaf"))
+		// The leftmost leaf has one sibling per level, including the root.
+		depth := 0
+		for n := size - 1; n > 0; n >>= 1 {
+			depth++
+		}
+		path := make([][32]byte, depth)
+		root := leaf
+		for range path {
+			root = HashNode(root, [32]byte{})
+		}
+		if err := Verify(root, leaf, Proof{Size: size, Path: path}); err != nil {
+			t.Fatalf("size=%d: %v", size, err)
+		}
+		if err := Verify(root, leaf, Proof{Size: size}); err == nil {
+			t.Fatalf("size=%d: accepted empty path", size)
+		}
+	}
+}
