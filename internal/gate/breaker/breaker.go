@@ -319,14 +319,6 @@ func (b *Breaker) quorum() int {
 	return b.cfg.Quorum
 }
 
-// SpendNonce marks a reset nonce used without applying the reset (a nonce
-// seen anywhere, even in an unverified local record, is spent).
-func (b *Breaker) SpendNonce(n string) {
-	b.mu.Lock()
-	b.nonces[n] = true
-	b.mu.Unlock()
-}
-
 // Epoch returns the unsigned Epoch statement; the daemon signs it.
 func (b *Breaker) Epoch(now time.Time) proto.Epoch {
 	b.mu.Lock()

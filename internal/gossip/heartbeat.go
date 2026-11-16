@@ -181,17 +181,6 @@ func (n *Node) LocalAddr() net.Addr {
 	return n.conn.LocalAddr()
 }
 
-// PeerStatuses returns a snapshot of every peer's current liveness state.
-func (n *Node) PeerStatuses() map[string]PeerStatus {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	out := make(map[string]PeerStatus, len(n.states))
-	for id, st := range n.states {
-		out[id] = st.status
-	}
-	return out
-}
-
 func (n *Node) sendLoop(ctx context.Context) {
 	ticker := time.NewTicker(n.interval)
 	defer ticker.Stop()

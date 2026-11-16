@@ -390,16 +390,6 @@ func (s *Store) Append(level, event, source string, data interface{}) error {
 	return writeTreeHead(s.dir, s.key, s.s, s.leaves)
 }
 
-// Snapshot flushes and returns the raw encrypted log bytes.
-func (s *Store) Snapshot() ([]byte, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.f != nil {
-		_ = s.f.Sync()
-	}
-	return os.ReadFile(filepath.Join(s.dir, logFilename))
-}
-
 // Close flushes and closes the log.
 func (s *Store) Close() error {
 	s.mu.Lock()
