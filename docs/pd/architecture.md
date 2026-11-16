@@ -9,7 +9,7 @@ cmd/witness-pd/main.go
 │   └── → internal/store   — Encrypted, hash-chained append-only log
 │       └── → internal/encrypt — AES-256-GCM (machine-ID-derived key, PD label)
 │
-├── internal/pd/roles      — RBAC definitions and permission checks
+├── internal/pd/roles      — RBAC definitions and permission checks (not enforced yet)
 │
 ├── internal/pd/export     — Court export bundle generation and Ed25519 signing
 │   └── → internal/store   — Read log entries for bundle
@@ -57,6 +57,8 @@ Each log entry is: `[uint32 big-endian length][AES-256-GCM encrypted JSON]`
 The encrypted payload is a `store.Entry` JSON object. The nonce is prepended to the ciphertext (standard GCM format). The SHA-256 hash chain links each entry to the previous one via `prev_hash`.
 
 ## Dashboard security
+
+> **Removed.** The dashboard and its HTTP API no longer exist (see [dashboard.md](dashboard.md)). witness-pd has no network listener; the points below describe the earlier design.
 
 - Dashboard served only on `127.0.0.1` (loopback — not exposed to the network by default)
 - All `/api/*` routes require `Authorization: Bearer <WITNESS_PD_TOKEN>`
