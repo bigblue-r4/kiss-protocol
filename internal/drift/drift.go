@@ -19,9 +19,11 @@ type Change struct {
 func Measure(snap *genesis.Snapshot) ([]Change, error) {
 	var changes []Change
 
-	// Check every file recorded in genesis.
+	// Check every file recorded in genesis. The cache hashes a file reached
+	// through several paths (/bin -> /usr/bin) once per check.
+	hc := genesis.NewHashCache()
 	for _, entry := range snap.Files {
-		cur := genesis.HashOneFile(entry.Path)
+		cur := hc.Hash(entry.Path)
 		if cur == nil {
 			changes = append(changes, Change{
 				Type: "file_removed",
