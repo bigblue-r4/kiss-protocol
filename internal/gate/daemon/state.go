@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/bigblue-r4/kiss-protocol/internal/fsutil"
 	"github.com/bigblue-r4/kiss-protocol/internal/gate/breaker"
 	"github.com/bigblue-r4/kiss-protocol/internal/gate/core"
 	"github.com/bigblue-r4/kiss-protocol/internal/gate/evidence"
@@ -60,12 +61,7 @@ func (d *Daemon) saveState(v *evidence.View, c *core.Core) {
 	if err != nil {
 		return
 	}
-	tmp := d.statePath() + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		d.logf("saving state: %v", err)
-		return
-	}
-	if err := os.Rename(tmp, d.statePath()); err != nil {
+	if err := fsutil.WriteFileAtomic(d.statePath(), b, 0o600); err != nil {
 		d.logf("saving state: %v", err)
 	}
 }

@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/bigblue-r4/kiss-protocol/internal/fsutil"
 )
 
 // Peer is a trusted gossip peer.
@@ -120,9 +122,5 @@ func (ps *PeerStore) save() error {
 	if err != nil {
 		return err
 	}
-	tmp := ps.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, ps.path)
+	return fsutil.WriteFileAtomic(ps.path, data, 0600)
 }
