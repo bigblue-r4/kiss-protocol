@@ -53,12 +53,22 @@ func (d *DevSigner) PublicKey() ed25519.PublicKey {
 	return d.pub
 }
 
+// loadOrGenerateSeed returns the 32-byte ed25519 seed stored at path. Only a
+// missing file is replaced by a fresh key. A file that exists but cannot be
+// read, or is not exactly 32 bytes, is an error: silently minting a new key
+// would change this machine's signing identity and lose the old key. (The
+// witness runs as root, so the file's 0400 mode does not stop an overwrite.)
 func loadOrGenerateSeed(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
-	if err == nil && len(data) == ed25519.SeedSize {
+	if err == nil {
+		if len(data) != ed25519.SeedSize {
+			return nil, fmt.Errorf("key file %s is %d bytes, want a %d-byte ed25519 seed; "+
+				"refusing to replace it (restore it from backup, or move it aside to generate a new key, which changes this signer's identity)",
+				path, len(data), ed25519.SeedSize)
+		}
 		return data, nil
 	}
-	if err != nil && !os.IsNotExist(err) {
+	if !os.IsNotExist(err) {
 		return nil, fmt.Errorf("read key: %w", err)
 	}
 
@@ -66,10 +76,30 @@ func loadOrGenerateSeed(path string) ([]byte, error) {
 	if _, err := rand.Read(seed); err != nil {
 		return nil, fmt.Errorf("generate seed: %w", err)
 	}
-	if err := os.WriteFile(path, seed, 0400); err != nil {
+	if err := writeNewKey(path, seed); err != nil {
 		return nil, fmt.Errorf("write key: %w", err)
 	}
 	return seed, nil
+}
+
+// writeNewKey creates path (mode 0400) and writes seed to it, refusing to
+// overwrite a file that appeared in the meantime. The data is synced before
+// returning so a crash cannot leave a key that signed something but is not
+// on disk.
+func writeNewKey(path string, seed []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0400)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(seed); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func printDevBanner() {
