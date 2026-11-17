@@ -14,6 +14,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/bigblue-r4/kiss-protocol/internal/hashutil"
 )
 
 // Snapshot is the full machine state at genesis.
@@ -125,8 +127,7 @@ func (s *Snapshot) computeHash() string {
 	tmp := *s
 	tmp.Hash = ""
 	data, _ := json.Marshal(tmp)
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+	return hashutil.SHA256Hex(data)
 }
 
 func kernelVersion() string {

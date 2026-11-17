@@ -10,8 +10,6 @@ package soul
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -19,6 +17,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/bigblue-r4/kiss-protocol/internal/hashutil"
 )
 
 const DefaultSoulPath = "~/.witness/soul.toml"
@@ -145,8 +145,7 @@ func Hash(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+	return hashutil.SHA256Hex(data), nil
 }
 
 // verify checks the soul file's integrity hash.
@@ -157,8 +156,7 @@ func verify(data []byte, expected string) error {
 		// Not yet stamped — allow on first init.
 		return nil
 	}
-	sum := sha256.Sum256(zeroSoulHash(data))
-	actual := hex.EncodeToString(sum[:])
+	actual := hashutil.SHA256Hex(zeroSoulHash(data))
 	if actual != expected {
 		return fmt.Errorf("soul hash mismatch: expected %s got %s", expected, actual)
 	}
