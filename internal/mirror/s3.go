@@ -16,6 +16,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/bigblue-r4/kiss-protocol/internal/hashutil"
 )
 
 const (
@@ -123,7 +125,7 @@ func (b *s3Backend) Push(data json.RawMessage) error {
 
 func (b *s3Backend) doPut(data json.RawMessage, treeSize uint64) error {
 	body := []byte(data)
-	payHash := hexSHA256(body)
+	payHash := hashutil.SHA256Hex(body)
 
 	req, err := http.NewRequest(http.MethodPut, b.objectURL(), bytes.NewReader(body))
 	if err != nil {
@@ -223,7 +225,7 @@ func (b *s3Backend) sigV4(req *http.Request, payloadHashHex string) {
 		"AWS4-HMAC-SHA256",
 		datetime,
 		credScope,
-		hexSHA256([]byte(canReq)),
+		hashutil.SHA256Hex([]byte(canReq)),
 	}, "\n")
 
 	sigKey := s3DeriveKey(b.secret, date, b.region)
@@ -255,9 +257,4 @@ func s3HMAC(key, data []byte) []byte {
 	mac := hmac.New(sha256.New, key)
 	mac.Write(data)
 	return mac.Sum(nil)
-}
-
-func hexSHA256(data []byte) string {
-	h := sha256.Sum256(data)
-	return hex.EncodeToString(h[:])
 }
