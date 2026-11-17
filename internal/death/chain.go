@@ -10,6 +10,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/bigblue-r4/kiss-protocol/internal/hashutil"
 )
 
 const tailBytes int64 = 1 << 20
@@ -102,8 +104,7 @@ func loadRecord(path string) (savedRecord, error) {
 			return s, fmt.Errorf("partial digest on unfinished hash")
 		}
 	}
-	h := sha256.Sum256(data)
-	s.Reference = Reference{Name: filepath.Base(path), SHA256: hex.EncodeToString(h[:])}
+	s.Reference = Reference{Name: filepath.Base(path), SHA256: hashutil.SHA256Hex(data)}
 	return s, nil
 }
 
@@ -122,8 +123,7 @@ func chainDigest(previous, segment string, length int64) string {
 	var n [8]byte
 	binary.BigEndian.PutUint64(n[:], uint64(length))
 	data = append(data, n[:]...)
-	h := sha256.Sum256(data)
-	return hex.EncodeToString(h[:])
+	return hashutil.SHA256Hex(data)
 }
 
 func tailStart(length int64) int64 {
