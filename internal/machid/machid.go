@@ -2,11 +2,11 @@
 package machid
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/bigblue-r4/kiss-protocol/internal/hashutil"
 )
 
 // Get returns a stable unique identifier for this machine.
@@ -28,6 +28,5 @@ func Get() string {
 		}
 	}
 	hostname, _ := os.Hostname()
-	sum := sha256.Sum256([]byte("witness-fallback:" + hostname))
-	return hex.EncodeToString(sum[:])
+	return hashutil.SHA256Hex([]byte("witness-fallback:" + hostname))
 }
