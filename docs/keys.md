@@ -154,6 +154,16 @@ Delete `~/.witness/dev-signing.key`. Restart with `--dev` to generate a fresh ke
 Tree head verification continues because the MAC key (derived from the machine
 ID via HKDF) is unaffected. The new dev key signs future tree heads.
 
+### Damaged key file
+
+The dev and software signers generate a key **only when the key file is
+missing**. If `dev-signing.key` or `signing.key` exists but is not exactly 32
+bytes, or cannot be read, the signer refuses to start and names the file. It
+never replaces the file: that would change this machine's signing identity and
+destroy the old key. Restore the file from backup. If the key is truly lost,
+move the file aside and restart to generate a new one, then re-pin the new
+public key wherever the old one was trusted.
+
 ### Lost or compromised PIV key
 
 1. Remove the compromised entry from the allowlist.

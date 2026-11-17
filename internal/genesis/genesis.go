@@ -7,8 +7,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -136,8 +138,9 @@ func kernelVersion() string {
 
 func hashPaths(files, dirs []string) []FileEntry {
 	var entries []FileEntry
+	hc := NewHashCache()
 	for _, p := range files {
-		if e := HashOneFile(p); e != nil {
+		if e := hc.Hash(p); e != nil {
 			entries = append(entries, *e)
 		}
 	}
@@ -150,7 +153,7 @@ func hashPaths(files, dirs []string) []FileEntry {
 			if de.IsDir() {
 				continue // shallow only
 			}
-			if e := HashOneFile(d + "/" + de.Name()); e != nil {
+			if e := hc.Hash(d + "/" + de.Name()); e != nil {
 				entries = append(entries, *e)
 			}
 		}
@@ -159,22 +162,67 @@ func hashPaths(files, dirs []string) []FileEntry {
 }
 
 // HashOneFile computes a FileEntry for the given path. Returns nil on error.
+//
+// The file is streamed through SHA-256 rather than read whole, so a large
+// binary in a watched directory costs a fixed buffer, not its size in memory.
+// Mode and size come from the same open file that was hashed.
 func HashOneFile(path string) *FileEntry {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil
 	}
-	info, err := os.Stat(path)
+	defer f.Close()
+	info, err := f.Stat()
 	if err != nil {
 		return nil
 	}
-	sum := sha256.Sum256(data)
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return nil
+	}
 	return &FileEntry{
 		Path:   path,
-		SHA256: hex.EncodeToString(sum[:]),
+		SHA256: hex.EncodeToString(h.Sum(nil)),
 		Mode:   fmt.Sprintf("%04o", info.Mode()),
 		Size:   info.Size(),
 	}
+}
+
+// HashCache hashes each underlying file at most once per pass.
+//
+// On merged-/usr systems (current Debian, Ubuntu, Fedora) /bin and /sbin are
+// symlinks to /usr/bin and /usr/sbin, so the watched directories name every
+// binary twice, and many binaries are themselves symlinks to another watched
+// file. HashOneFile follows symlinks, so two paths that resolve to the same
+// file always get the same hash, mode and size; the cache computes that once
+// and hands each path its own entry. Results are identical to calling
+// HashOneFile on every path. Use a new cache for each pass: it never expires.
+type HashCache struct {
+	byReal map[string]*FileEntry // resolved path -> entry (nil = unreadable)
+}
+
+// NewHashCache returns an empty cache for one hashing pass.
+func NewHashCache() *HashCache {
+	return &HashCache{byReal: make(map[string]*FileEntry)}
+}
+
+// Hash is HashOneFile(path), computed once per resolved file.
+func (c *HashCache) Hash(path string) *FileEntry {
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return HashOneFile(path) // broken link, vanished file: no sharing
+	}
+	e, ok := c.byReal[real]
+	if !ok {
+		e = HashOneFile(real)
+		c.byReal[real] = e
+	}
+	if e == nil {
+		return nil
+	}
+	out := *e
+	out.Path = path
+	return &out
 }
 
 func procList() []string { return ProcNames() }
