@@ -139,24 +139,6 @@ func Exists() bool {
 	return err == nil
 }
 
-// InstallDefault copies the default soul file from src to the witness config dir.
-// Called by `witness init` when no soul file is present.
-// Never overwrites an existing soul file.
-func InstallDefault(src string) error {
-	dst := expandHome(DefaultSoulPath)
-	if _, err := os.Stat(dst); err == nil {
-		return fmt.Errorf("soul file already exists at %s — will not overwrite", dst)
-	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
-		return err
-	}
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return fmt.Errorf("read default soul: %w", err)
-	}
-	return os.WriteFile(dst, data, 0400) // read-only; soul is immutable
-}
-
 // Hash returns the SHA-256 hash of the soul file at path (for checksums).
 func Hash(path string) (string, error) {
 	data, err := os.ReadFile(expandHome(path))

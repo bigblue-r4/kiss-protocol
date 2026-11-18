@@ -260,11 +260,6 @@ func (r *Runner) ProxyAddr() string {
 	return fmt.Sprintf("http://127.0.0.1:%d", r.cfg.ProxyPort)
 }
 
-// AuditLogPath returns the path to Pipelock's audit log.
-func (r *Runner) AuditLogPath() string {
-	return r.cfg.AuditLog
-}
-
 // AuditLogPath returns the audit log path directly from Config.
 func (c *Config) AuditLogPath() string {
 	return c.AuditLog
