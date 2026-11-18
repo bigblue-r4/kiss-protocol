@@ -190,11 +190,20 @@ func ReadFile(path string) (*Request, error) {
 
 // WriteFile saves r to path (mode 0600).
 func (r *Request) WriteFile(path string) error {
-	data, err := json.MarshalIndent(r, "", "  ")
+	data, err := r.encode()
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0600)
+	return os.WriteFile(path, data, 0600)
+}
+
+// encode is the request as WriteFile stores it: indented JSON and a newline.
+func (r *Request) encode() ([]byte, error) {
+	data, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(data, '\n'), nil
 }
 
 // LoadKey reads an operator key: a 32-byte ed25519 seed file, the format
