@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/bigblue-r4/kiss-protocol/internal/fsutil"
 )
 
 // AuditEvent is one raw event from Pipelock's NDJSON audit log.
@@ -170,19 +172,9 @@ func (t *Tailer) flushLocked() {
 	if err := os.MkdirAll(filepath.Dir(t.statePath), 0700); err != nil {
 		return
 	}
-	tmp := t.statePath + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
-	if err != nil {
-		return
-	}
-	_, werr := f.Write(data)
-	serr := f.Sync()
-	cerr := f.Close()
-	if werr != nil || serr != nil || cerr != nil {
-		_ = os.Remove(tmp)
-		return
-	}
-	if os.Rename(tmp, t.statePath) == nil {
+	// Errors are ignored on purpose: the offset stays dirty and the next
+	// flush tries again.
+	if fsutil.WriteFileAtomic(t.statePath, data, 0600) == nil {
 		t.dirty = 0
 		t.lastFlush = time.Now()
 	}

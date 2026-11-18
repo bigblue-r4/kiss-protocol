@@ -30,6 +30,7 @@ import (
 	"lukechampine.com/blake3"
 
 	"github.com/bigblue-r4/kiss-protocol/internal/encrypt"
+	"github.com/bigblue-r4/kiss-protocol/internal/fsutil"
 	"github.com/bigblue-r4/kiss-protocol/internal/merkle"
 	"github.com/bigblue-r4/kiss-protocol/internal/signer"
 )
@@ -390,16 +391,6 @@ func (s *Store) Append(level, event, source string, data interface{}) error {
 	return writeTreeHead(s.dir, s.key, s.s, s.leaves)
 }
 
-// Snapshot flushes and returns the raw encrypted log bytes.
-func (s *Store) Snapshot() ([]byte, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.f != nil {
-		_ = s.f.Sync()
-	}
-	return os.ReadFile(filepath.Join(s.dir, logFilename))
-}
-
 // Close flushes and closes the log.
 func (s *Store) Close() error {
 	s.mu.Lock()
@@ -609,11 +600,7 @@ func writeTreeHead(dir string, key []byte, s signer.Signer, leaves [][32]byte) e
 	if err != nil {
 		return err
 	}
-	tmp := filepath.Join(dir, treeHeadFilename+".tmp")
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, filepath.Join(dir, treeHeadFilename))
+	return fsutil.WriteFileAtomic(filepath.Join(dir, treeHeadFilename), data, 0600)
 }
 
 // verifyTreeHead reads tree-head.json and checks it against the given leaf set.

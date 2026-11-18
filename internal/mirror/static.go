@@ -11,12 +11,14 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/bigblue-r4/kiss-protocol/internal/fsutil"
 )
 
 // ── File backend ──────────────────────────────────────────────────────────────
 
 // fileBackend writes tree-head.json into a local directory.
-// Writes are atomic: content goes to a .tmp file first, then os.Rename.
+// Writes are atomic and durable (fsutil.WriteFileAtomic).
 type fileBackend struct{ dir string }
 
 func newFileBackend(dir string) (*fileBackend, error) {
@@ -27,14 +29,8 @@ func newFileBackend(dir string) (*fileBackend, error) {
 }
 
 func (b *fileBackend) Push(data json.RawMessage) error {
-	tmp := filepath.Join(b.dir, "tree-head.json.tmp")
-	dst := filepath.Join(b.dir, "tree-head.json")
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	if err := fsutil.WriteFileAtomic(filepath.Join(b.dir, "tree-head.json"), data, 0644); err != nil {
 		return fmt.Errorf("mirror file: write: %w", err)
-	}
-	if err := os.Rename(tmp, dst); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("mirror file: rename: %w", err)
 	}
 	return nil
 }

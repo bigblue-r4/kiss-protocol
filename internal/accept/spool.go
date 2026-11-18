@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/bigblue-r4/kiss-protocol/internal/fsutil"
 )
 
 // SpoolDir is where the CLI leaves signed requests for the daemon.
@@ -22,11 +24,11 @@ func Submit(primaryDir string, r *Request) (string, error) {
 		return "", err
 	}
 	path := filepath.Join(dir, r.ID+".json")
-	tmp := path + ".tmp"
-	if err := r.WriteFile(tmp); err != nil {
+	data, err := r.encode()
+	if err != nil {
 		return "", err
 	}
-	return path, os.Rename(tmp, path)
+	return path, fsutil.WriteFileAtomic(path, data, 0600)
 }
 
 // Pending is one spooled request file. Err is set if it could not be read.
