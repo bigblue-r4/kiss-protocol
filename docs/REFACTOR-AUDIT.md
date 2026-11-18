@@ -36,24 +36,44 @@ Commented-out code: **none.** The regex hits were all prose comments.
 
 - Temp-file-then-rename atomic write is hand-rolled 7 times: store,
   death, accept/spool, gossip/peer, mirror/static, gate/daemon/state, and
-  pipelock/tailer. **act: PR 2**, unify as `internal/fsutil.WriteFileAtomic`.
-- Ed25519 key loading appears in 4 places (accept/request, pd/export,
-  pipelock/signingkey, signer/dev), and sha256→hex in 7. **act: PR 3**, only
-  where the on-disk format really is the same.
+  pipelock/tailer. **act: done (#51, landed with #47).** Six sites now use
+  `internal/fsutil.WriteFileAtomic`. Every one gained file and directory
+  fsync, and none got weaker. **keep: `death.go`.** Its destination name is
+  derived from the random temp name, and it already does a full fsync.
+- sha256→hex is hand-written in 8 places. **act: done (#52).** Seven witness-side
+  sites use `internal/hashutil.SHA256Hex`, which makes the same stdlib calls, so
+  every output is byte-identical. **keep: `gate/policy.Hash`.** The gate is a
+  separate process boundary (`tests/importboundary_test.go`). **keep: the
+  streaming hashes** (death, pd/export, genesis `HashOneFile`): different shape.
+- Ed25519 key loading appears in 4 places. **keep all four.** They read three
+  different on-disk formats: a raw 32-byte seed file (accept/request,
+  signer/dev), a 64-byte hex string (pd/export), and pipelock's
+  header+base64 (pipelock/signingkey). The two raw-seed readers differed in
+  what they did with a bad file, which exposed a real bug: see below.
+
+**Finding (fixed, #53): the signer replaced a damaged key file.**
+`signer.loadOrGenerateSeed` treated a key file of the wrong length as missing
+and wrote a new key over it, with no error and no log line. The witness runs as
+root, so mode 0400 did not stop this. A truncated `signing.key` therefore
+silently changed the witness's and the gate's signing identity and destroyed
+the old key. Now only a missing file is generated; a damaged one is an error.
 
 ## Dependencies
 
 The direct deps are `BurntSushi/toml`, `golang.org/x/crypto`, and
 `lukechampine.com/blake3`. **keep all three:** the stdlib has no TOML or BLAKE3,
-and x/crypto supplies primitives. Dependabot #34 (x/crypto 0.19 → 0.52) is
-open.
+and x/crypto supplies primitives. **act: done (#54).** x/crypto
+0.19 → 0.59 rather than Dependabot's 0.52, which still carried four x/crypto
+advisories. That cleared all 17 Dependabot alerts. The `go` directive moved to
+1.26.0, which x/crypto 0.59 requires. `go mod tidy` is not run, because it would
+add `go-piv/piv-go` for the optional `piv` build tag.
 
 **Finding: the Go toolchain pin.** `go.mod` pins `toolchain go1.25.0`, and both
 `ci.yml` and `release.yml` build with it via `go-version-file`. `govulncheck`
 reports **37 stdlib vulnerabilities that the code actually reaches**, for
 example GO-2026-6859 (net/http server crash, reached via the gate daemon's
-`Serve`). Fixes land up to go1.26.11. Bumping the pin changes release builds,
-so it needs an explicit go.
+`Serve`). Fixes land up to go1.26.11. **act: done
+(#48, landed with #54).** `toolchain go1.26.11`; govulncheck now reports 0.
 
 ## Loose types (`map[string]any` / `interface{}`: 37 sites in 16 files)
 
@@ -62,3 +82,18 @@ so it needs an explicit go.
 - **keep.** `gate/core` and `gate/evidence/signals` decode into
   `map[string]any` to probe untrusted JSON paths. `gate/feed` deliberately
   avoids map decoding for numbers above 2^53.
+
+## Other findings during the pass
+
+- **Witness drift scan CPU (fixed, #46).** Each 30 s drift check re-read and
+  hashed every watched file in memory, once per symlinked alias. Now each real
+  file is hashed once per check, streamed: 1.98 s / 1300 MB → 0.58 s / 58 MB.
+- **`EvidenceTailer.Stop` race (fix: #49).** `Stop` could return before `Run`
+  had registered, which skipped the final drain, so pipelock's last receipt could
+  be lost. Under `-race` it failed about 1 run in 30 on Go 1.25 and 1.26.
+- **witness-pd docs overclaimed (fix: #50).** They described a dashboard that
+  was removed in b2a82ea, and roles as enforced. The docs now say what is
+  wired and what is not.
+- **Open: `TestAcceptance18ConcurrentBudget` flakes on Ubuntu.** It reports
+  "issued 0 against budget 100". Under CPU load the number issued falls as low
+  as 9 of 200, so 0 is reachable on a busy runner. It needs a test-side fix.
