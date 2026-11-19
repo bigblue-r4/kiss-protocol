@@ -15,8 +15,16 @@ func parseVerifierPins(args []string) ([]ed25519.PublicKey, []string, error) {
 	var pins []ed25519.PublicKey
 	var rest []string
 	requested := false
+	requirePins := false
 	for i := 0; i < len(args); i++ {
 		name, value, equal := strings.Cut(args[i], "=")
+		if name == "--require-pins" {
+			if equal {
+				return nil, nil, fmt.Errorf("--require-pins does not accept a value")
+			}
+			requirePins = true
+			continue
+		}
 		if name != "--pubkey" && name != "--pubkey-file" {
 			rest = append(rest, args[i])
 			continue
@@ -44,6 +52,9 @@ func parseVerifierPins(args []string) ([]ed25519.PublicKey, []string, error) {
 				pins = append(pins, entry.PubKey)
 			}
 		}
+	}
+	if requirePins && len(pins) == 0 {
+		return nil, nil, fmt.Errorf("--require-pins requires a trusted --pubkey or non-empty --pubkey-file")
 	}
 	if requested && len(pins) == 0 {
 		return nil, nil, fmt.Errorf("--pubkey-file contains no public keys")

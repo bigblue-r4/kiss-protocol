@@ -125,6 +125,9 @@ Verifier flags (verify, prove, audit, export, verify-export):
   --pubkey HEX       Trusted Ed25519 public key (repeatable)
   --pubkey-file PATH Soul-format signer allowlist (repeatable)
 
+Strict verification (verify, prove, audit):
+  --require-pins     Refuse verification without a trusted signer pin
+
 Peer mesh and enforcement: run 'enforcer --help'
 `, version)
 }

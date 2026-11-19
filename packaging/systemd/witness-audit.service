@@ -1,0 +1,35 @@
+[Unit]
+Description=SGAIL Labs Harborlight — pinned transparency mirror audit
+Documentation=https://github.com/bigblue-r4/kiss-protocol/blob/main/docs/mirror-setup.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=witness
+Group=witness
+UMask=0077
+Environment=HOME=/var/lib/witness
+EnvironmentFile=-/etc/witness/witness-audit.env
+# Pins are provisioned independently by an administrator, never copied from
+# the head being audited. Missing/empty/unreadable files fail the service.
+ExecStart=/usr/local/bin/witness audit --require-pins --pubkey-file /etc/witness/trusted-signers.txt
+TimeoutStartSec=60s
+
+# Read local state without acquiring permission to rewrite it. Network access
+# is required for the independently hosted mirror; no signing token is needed.
+NoNewPrivileges=true
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
