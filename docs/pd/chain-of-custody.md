@@ -44,7 +44,7 @@ Where `XXXXXXXX` is 4 bytes of cryptographic random hex. Example: `EV-20260512-a
 Legal holds are hard-blocked in code — not policy:
 
 - `RecordTransfer` returns an error if `item.LegalHold == true`
-- `RecordDestroyed` returns an error if `item.LegalHold == true`
+- `RecordDestroyed` returns an error if `item.LegalHold == true` (no command calls it yet)
 - The hold state is stored in the catalog (`pd-items.json`) and written to the log as `hold_set` / `hold_release` events
 
 A hold cannot be bypassed by writing directly to the log because the catalog is the authority on current item state. Any discrepancy between catalog and log constitutes a tamper event.

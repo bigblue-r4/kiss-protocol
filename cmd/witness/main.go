@@ -699,21 +699,15 @@ func cmdStatus() {
 		}
 	}
 
-	s, err := store.Open(cfg.PrimaryDir, key, nil)
-	var treeSize uint64
-	var treeRoot string
-	var prevRoot string
-	var integrityStatus string
+	head, uncovered, err := statusIntegrity(cfg.PrimaryDir, key)
+	integrityStatus := "OK"
 	if err != nil {
 		integrityStatus = "FAIL: " + err.Error()
-	} else {
-		head := s.Head()
-		treeSize = head.Size
-		treeRoot = head.Root
-		prevRoot = head.PrevRoot
-		integrityStatus = "OK"
-		_ = s.Close()
+	} else if uncovered.Bytes > 0 {
+		integrityStatus = fmt.Sprintf("OK (%d record(s), %d byte(s) written after the signed head, not checked)",
+			uncovered.Records, uncovered.Bytes)
 	}
+	treeSize, treeRoot, prevRoot := head.Size, head.Root, head.PrevRoot
 
 	fmt.Println("─────────────────────────────────────────")
 	fmt.Printf("Machine ID    : %s\n", mid)
@@ -732,6 +726,20 @@ func cmdStatus() {
 			last.Timestamp.Format(time.RFC3339))
 	}
 	fmt.Println("─────────────────────────────────────────")
+}
+
+// statusIntegrity checks the stored tree head against the records it covers.
+// It opens the log read-only (store.OpenPinned), like verify: status is run
+// while the daemon is appending, and the daemon's store.Open would read the
+// log and the head at different moments (a false "root mismatch" on a busy
+// log) and could move a just-written record aside as a crash tail.
+func statusIntegrity(dir string, key []byte) (store.TreeHead, store.Uncovered, error) {
+	s, err := store.OpenPinned(dir, key, nil)
+	if err != nil {
+		return store.TreeHead{}, store.Uncovered{}, err
+	}
+	defer s.Close()
+	return s.Head(), s.Uncovered(), nil
 }
 
 // ── watchdog ─────────────────────────────────────────────────────────────────

@@ -55,7 +55,7 @@ witness-pd keygen
 
 Store the **public key** in `config.json`. Keep the **private key** as `WITNESS_PD_SIGN_KEY`.
 
-To verify a signed bundle:
+To verify a signed bundle (Go API only; no `witness-pd` command verifies a bundle yet):
 
 ```go
 // In Go:

@@ -25,6 +25,7 @@ type EvidenceTailer struct {
 	dir          string
 	events       chan AuditEvent
 	stop         chan struct{}
+	done         chan struct{} // closed when Run returns
 	pollEvery    time.Duration
 	drainTimeout time.Duration
 
@@ -40,6 +41,7 @@ func NewEvidenceTailer(dir string, events chan AuditEvent) *EvidenceTailer {
 		dir:       dir,
 		events:    events,
 		stop:      make(chan struct{}),
+		done:      make(chan struct{}),
 		pollEvery: time.Second,
 		// On Stop each follower reads to EOF so pipelock's final receipt (e.g.
 		// the shutdown checkpoint) is captured. The deadline bounds that drain.
@@ -54,6 +56,7 @@ func (e *EvidenceTailer) SetPollEvery(d time.Duration) { e.pollEvery = d }
 
 // Run discovers evidence files and follows each one. Blocks until Stop.
 func (e *EvidenceTailer) Run() {
+	defer close(e.done)
 	firstScan := true
 	for {
 		// Files present at boot are followed from the end (skip history); files
@@ -170,8 +173,13 @@ func (e *EvidenceTailer) follow(path string, fromStart bool) {
 	}
 }
 
-// Stop signals the tailer to exit and waits for its followers to drain.
+// Stop signals the tailer to exit and waits until Run has drained every
+// follower and returned. Like Tailer.Stop, call it only after Run was started.
 func (e *EvidenceTailer) Stop() {
 	close(e.stop)
-	e.wg.Wait()
+	// Wait for Run, not just the followers: Run's final scan may still be
+	// starting a follower for a last-moment file. Waiting on wg here raced
+	// with that scan's wg.Add, so Stop could return before the final receipt
+	// was drained. Run waits for every follower before it closes done.
+	<-e.done
 }
