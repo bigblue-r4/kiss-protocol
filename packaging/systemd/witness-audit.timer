@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the pinned Harborlight mirror audit every five minutes
+
+[Timer]
+OnCalendar=*-*-* *:00/5:00
+Persistent=true
+Unit=witness-audit.service
+
+[Install]
+WantedBy=timers.target
