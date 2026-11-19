@@ -187,7 +187,7 @@ func TestPackagedAuditCommand(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.missing {
-				if err := os.Remove(pinFile); err != nil {
+				if err := os.Remove(pinFile); err != nil && !os.IsNotExist(err) {
 					t.Fatal(err)
 				}
 			} else if err := os.WriteFile(pinFile, []byte(tc.pins), 0600); err != nil {
