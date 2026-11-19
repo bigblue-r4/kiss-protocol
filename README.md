@@ -319,3 +319,7 @@ This mode exits with an error if no trusted pins were supplied, including when
 a deployment accidentally omits its pin arguments. The flag takes no value;
 `--require-pins=false` is rejected. It does not add freshness or rollback
 protection; use an independent checkpoint for those guarantees.
+
+For scheduled Linux production audits, use the packaged pinned audit service
+and timer with an administrator-provisioned signer file; see
+[scheduled production audits](docs/mirror-setup.md#scheduled-production-audit-linuxsystemd).

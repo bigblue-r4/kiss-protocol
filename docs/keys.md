@@ -15,8 +15,12 @@ is verified on every `Open`. When the daemon opens the log it requires the
 signature to come from its own signer or from a key in the trust allowlist; the
 `signer_key` written in the head file is not taken at its word, because anyone
 who can rewrite the log can rewrite that field too. Commands that open the log
-without a signer (`witness verify`, `witness audit`, `witness prove`) have no
-key to pin to and check the MAC and the signature as written.
+without a signer (`witness verify`, `witness audit`, `witness prove`) must be
+supplied with independently trusted public keys to establish signer identity.
+For production automation use `--require-pins --pubkey-file
+/etc/witness/trusted-signers.txt`. Without pins, these commands warn and check
+consistency and signatures against the key in the head; they do not establish
+who signed. See [scheduled production audits](mirror-setup.md#scheduled-production-audit-linuxsystemd).
 
 ---
 

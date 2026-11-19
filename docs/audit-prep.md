@@ -123,8 +123,8 @@ Please do not open public GitHub issues with exploit details.
 
 ### Pin verifier keys
 
-Use `witness verify --pubkey HEX`, `witness prove <index> --pubkey HEX`, or
-`witness audit --pubkey-file ~/.witness/trust/signers.txt` to require a signed
+Use `witness verify --require-pins --pubkey HEX`, `witness prove <index> --require-pins --pubkey HEX`, or
+`witness audit --require-pins --pubkey-file /etc/witness/trusted-signers.txt` to require a signed
 local head from an independently trusted key. Both flags are repeatable; key
 files use `<label> <hex-key>` lines, as for soul verification. Unpinned commands
 warn on stderr and do not establish signer identity. See the README's

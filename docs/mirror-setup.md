@@ -2,8 +2,9 @@
 
 The witness daemon can push a signed copy of the local Merkle log tree-head to
 an external transparency mirror after every drift tick and at daemon start.
-An operator or auditor can then run `witness audit` to compare the local log
-against the mirror and detect tampering.
+An operator or auditor can compare the pinned local log against the mirror
+using the strict audit command below. This detects some inconsistencies; it
+does not authenticate the remote head or provide full rollback protection.
 
 ## Configuration
 
@@ -123,20 +124,69 @@ is updated atomically (write to `.tmp`, rename).
 ## Auditing
 
 ```bash
-witness audit
+witness audit --require-pins --pubkey-file /etc/witness/trusted-signers.txt
 ```
 
 Exit codes:
 
 | Code | Meaning |
 |------|---------|
-| `0` | Local and mirror agree, or mirror is behind (push pending) |
-| `1` | Mirror disagrees — size match but root differs, or mirror claims more entries than local. Investigate for tampering. |
-| `2` | Mirror unreachable, misconfigured, or returned unparseable data |
+| `0` | Local and mirror agree, or mirror is behind within the tolerated lag (default: 10 leaves) |
+| `1` | Local integrity/signer verification or arguments failed, or mirror disagrees (same size with a different root, or larger than local). Investigate the reported reason. |
+| `2` | Mirror unreachable/unusable, returned unparseable data, or lags beyond `--max-lag` |
 
-Run `witness audit` from a cron job or monitoring system to provide continuous
-verification that the mirror has not been tampered with independently of the
-witness process.
+Provision `/etc/witness/trusted-signers.txt` from independently verified
+operator keys, using the soul allowlist format (`<label> <64-hex-key>`).
+Never obtain the trusted key from the head currently being audited. An empty,
+missing, unreadable, malformed, or untrusted pin set fails verification.
+Protect both the file and its parent directory against writes by the witness
+account. Multiple independently approved keys can be provisioned during rotation.
+
+### Scheduled production audit (Linux/systemd)
+
+The repository includes `witness-audit.service` and `witness-audit.timer`.
+The service hard-codes `--require-pins` and the administrator-managed pin file;
+there is no unpinned fallback. It runs every five minutes as `witness`, reads
+state with `HOME=/var/lib/witness` (matching `witness.service`), and has a
+read-only filesystem sandbox. It needs no signing key or hardware token.
+The installer does not enable it automatically: provision trusted pins and an
+independently hosted HTTPS mirror first.
+
+With a witness binary that supports `--require-pins`, run from the repository
+root after configuring `mirror_url` in
+`/var/lib/witness/.witness/config.json`:
+
+```bash
+# trusted-signers.txt is an independently verified file you provisioned.
+sudo install -d -o root -g witness -m 0750 /etc/witness
+sudo install -o root -g witness -m 0640 ./trusted-signers.txt /etc/witness/trusted-signers.txt
+sudo install -o root -g root -m 0644 packaging/systemd/witness-audit.service /etc/systemd/system/
+sudo install -o root -g root -m 0644 packaging/systemd/witness-audit.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+# This must succeed before scheduling. Missing pins or configuration fail.
+sudo systemctl start witness-audit.service
+sudo journalctl -u witness-audit.service -n 20 --no-pager
+sudo systemctl enable --now witness-audit.timer
+```
+
+The optional root-managed `/etc/witness/witness-audit.env` supplies mirror
+credentials and CA settings. Create it with mode `0600`, owned by root; systemd
+loads it before dropping privileges. Use mirror read-only credentials where the
+backend supports them. This service does not inherit the daemon's credential
+file and does not write to the mirror.
+
+Both exit 1 and exit 2 leave the oneshot service failed; neither is treated as a
+successful audit. A timer alone does not send alerts. Connect service failures
+and journal output to your monitoring system, distinguish unavailability from
+confirmed integrity failures, and monitor timer execution from another host.
+Inspect with `systemctl list-timers witness-audit.timer` and
+`journalctl -u witness-audit.service`. To stop scheduling, run
+`sudo systemctl disable --now witness-audit.timer` (an already running audit
+may finish).
+
+For cron or other orchestration, use the same strict command and preserve its
+exit status. Local verification without a mirror should likewise use
+`witness verify --require-pins --pubkey-file /etc/witness/trusted-signers.txt`.
 
 ---
 
@@ -145,8 +195,12 @@ witness process.
 - The daemon pushes the tree-head after every drift tick and once at startup.
   Push failures are logged but do not halt the daemon.
 - The tree-head JSON contains an ed25519 signature covering the size and root.
-  A mirror that silently rolls back the log will be detected when `witness audit`
-  sees a size or root mismatch.
+  The current audit compares size/root with the pinned local head; it does not
+  authenticate the mirror head. An older mirror head within the tolerated lag
+  can pass, and coordinated rollback of local and mirrored state can pass.
+  Independently retained authenticated checkpoints and continuity verification
+  are still required for robust rollback detection. This scheduled job does
+  not implement those protections.
 - AWS Sig V4 is implemented in-tree with no SDK dependency, consistent with the
   project's minimal third-party surface area principle.
 - Store credentials in a secrets manager or environment file with mode `0400`;
