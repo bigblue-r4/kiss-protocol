@@ -1,5 +1,9 @@
 # Harborlight PD — Dashboard
 
+> **Not available.** `witness-pd serve` and the dashboard were removed (surface
+> reduction, commit b2a82ea). Use `witness-pd status --json`. This page describes
+> the earlier design and is kept for reference.
+
 ## Starting the dashboard
 
 ```bash
