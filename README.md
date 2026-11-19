@@ -307,3 +307,15 @@ An unpinned check verifies consistency, MAC, and any signature against the key
 in the head; it does not establish who signed. Pinning does not prove freshness,
 prevent rollback by itself, or authenticate the remote mirror's head. Inclusion
 proof output still needs an independently trusted tree head for third-party use.
+
+For production automation, add `--require-pins` to `verify`, `prove`, or
+`audit`, together with keys provisioned out of band:
+
+```sh
+witness verify --require-pins --pubkey-file /etc/witness/trusted-signers.txt
+```
+
+This mode exits with an error if no trusted pins were supplied, including when
+a deployment accidentally omits its pin arguments. The flag takes no value;
+`--require-pins=false` is rejected. It does not add freshness or rollback
+protection; use an independent checkpoint for those guarantees.

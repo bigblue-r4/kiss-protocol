@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/hex"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -47,5 +48,61 @@ func TestParseVerifierPinsErrors(t *testing.T) {
 		if _, _, err := parseVerifierPins(args); err == nil {
 			t.Errorf("accepted %v", args)
 		}
+	}
+}
+
+func TestRequireVerifierPins(t *testing.T) {
+	key := strings.Repeat("ab", 32)
+	for _, args := range [][]string{
+		{"--require-pins"}, {"--require-pins=false"}, {"--require-pins=true"},
+		{"--require-pins", "--pubkey", "invalid"},
+	} {
+		if _, _, err := parseVerifierPins(args); err == nil {
+			t.Errorf("accepted %v", args)
+		}
+	}
+	file := filepath.Join(t.TempDir(), "signers")
+	if err := os.WriteFile(file, []byte("trusted "+key+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"--require-pins", "--pubkey", key, "0"},
+		{"0", "--pubkey=" + key, "--require-pins"},
+		{"--require-pins", "--pubkey-file", file, "0"},
+	} {
+		pins, rest, err := parseVerifierPins(args)
+		if err != nil || len(pins) != 1 || !reflect.DeepEqual(rest, []string{"0"}) {
+			t.Fatalf("%v: pins=%v rest=%v err=%v", args, pins, rest, err)
+		}
+	}
+}
+
+// Exercise real command dispatch: strict verification must reject missing trust
+// configuration before trying to load local state or contact a mirror.
+func TestRequirePinsCLI(t *testing.T) {
+	if os.Getenv("WITNESS_REQUIRE_PINS_TEST_HELPER") == "1" {
+		for i, arg := range os.Args {
+			if arg == "--" {
+				os.Args = append([]string{os.Args[0]}, os.Args[i+1:]...)
+				main()
+				return
+			}
+		}
+		os.Exit(2)
+	}
+	for _, command := range []string{"verify", "prove", "audit"} {
+		t.Run(command, func(t *testing.T) {
+			args := []string{"-test.run=^TestRequirePinsCLI$", "--", command, "--require-pins"}
+			if command == "prove" {
+				args = append(args, "0")
+			}
+			cmd := exec.Command(os.Args[0], args...)
+			cmd.Env = append(os.Environ(), "WITNESS_REQUIRE_PINS_TEST_HELPER=1")
+			output, err := cmd.CombinedOutput()
+			exitErr, ok := err.(*exec.ExitError)
+			if !ok || exitErr.ExitCode() != 1 || !strings.Contains(string(output), "--require-pins requires a trusted") {
+				t.Fatalf("expected missing-trust failure, got %v: %s", err, output)
+			}
+		})
 	}
 }

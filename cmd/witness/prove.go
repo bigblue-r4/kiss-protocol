@@ -21,7 +21,7 @@ import (
 func cmdProve() {
 	pins, args := verifierPins(os.Args[2:])
 	if len(args) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: witness prove <index> [--pubkey HEX] [--pubkey-file PATH]")
+		fmt.Fprintln(os.Stderr, "usage: witness prove <index> [--require-pins] [--pubkey HEX] [--pubkey-file PATH]")
 		os.Exit(1)
 	}
 	index, err := strconv.ParseUint(args[0], 10, 64)

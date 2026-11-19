@@ -20,7 +20,7 @@ import (
 func cmdVerify() {
 	pins, args := verifierPins(os.Args[2:])
 	if len(args) != 0 {
-		fatal("usage: witness verify [--pubkey HEX] [--pubkey-file PATH]")
+		fatal("usage: witness verify [--require-pins] [--pubkey HEX] [--pubkey-file PATH]")
 	}
 	mid := machid.Get()
 	cfg, err := config.Load(config.Path())
