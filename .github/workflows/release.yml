@@ -6,27 +6,33 @@ on:
       - "v*"
 
 permissions:
-  contents: write    # create GitHub release
-  id-token: write    # cosign OIDC keyless signing
+  contents: read
 
 jobs:
   release:
     name: build and sign release artifacts
     runs-on: ubuntu-latest
+    permissions:
+      contents: write    # create GitHub release
+      id-token: write    # cosign OIDC keyless signing
     # cosign-installer stays on v3 (cosign v2 sign-blob) and action-gh-release on
     # v2 — their next majors are breaking (cosign v3 switched sign-blob to a
     # bundle format). Both are Node20 actions, so keep the force-node24 shim.
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        with:
+          cosign-release: v2.5.2
 
       - name: Build cross-platform artifacts
         run: |
@@ -68,7 +74,7 @@ jobs:
           echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |
             dist/witness_*
