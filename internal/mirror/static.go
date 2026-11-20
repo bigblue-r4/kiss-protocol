@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bigblue-r4/kiss-protocol/internal/fsutil"
@@ -19,7 +20,10 @@ import (
 
 // fileBackend writes tree-head.json into a local directory.
 // Writes are atomic and durable (fsutil.WriteFileAtomic).
-type fileBackend struct{ dir string }
+type fileBackend struct {
+	dir    string
+	leafMu sync.Mutex // serialises leaf-feed updates from concurrent pushes
+}
 
 func newFileBackend(dir string) (*fileBackend, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {

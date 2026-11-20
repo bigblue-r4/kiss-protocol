@@ -335,6 +335,35 @@ func (s *Store) RootAt(size uint64) (string, error) {
 	return hex.EncodeToString(root[:]), nil
 }
 
+// LeafCount returns the number of records (Merkle leaves) in the log.
+func (s *Store) LeafCount() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return uint64(len(s.leaves))
+}
+
+// LeafAt returns the Merkle leaf hash of record i (false if i is out of range).
+func (s *Store) LeafAt(i uint64) ([32]byte, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if i >= uint64(len(s.leaves)) {
+		return [32]byte{}, false
+	}
+	return s.leaves[i], true
+}
+
+// LeavesFrom returns a copy of the leaf hashes from index from to the end.
+// Leaf hashes are computable from plaintext records only; they reveal no
+// record content, so they can be published for off-host continuity checks.
+func (s *Store) LeavesFrom(from uint64) [][32]byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if from >= uint64(len(s.leaves)) {
+		return nil
+	}
+	return append([][32]byte(nil), s.leaves[from:]...)
+}
+
 // OpenedWithUnsignedHead reports that the store was opened with a signer but
 // the stored head had no signature. That is expected once, when signing is
 // first configured for an existing log; otherwise someone stripped the

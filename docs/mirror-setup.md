@@ -119,6 +119,30 @@ export AWS_DEFAULT_REGION=us-east-1
 The directory is created automatically. The file `tree-head.json` inside it
 is updated atomically (write to `.tmp`, rename).
 
+### Leaf-hash feed (`leaves.bin`): history continuity off-host
+
+A signed head proves the log's root at one size. On its own, a later head can
+describe a completely rewritten history (someone with root on the host holds
+the signing key). The file mirror therefore also keeps `leaves.bin`: the
+32-byte Merkle leaf hash of every record, in log order, written **before** each
+head is pushed, so the feed always covers the published head. Leaf hashes are
+BLAKE3 of the record JSON and carry no record content. (Someone who can read
+the mirror could still confirm a guessed record.)
+
+An off-host puller keeps **its own copy** of the feed. On each pull it appends
+only the leaves after the size it already holds, then checks the signed head
+(after verifying its signature itself):
+
+```bash
+witness verify-leaves --leaves held-leaves.bin --size N --root HEX   # 0 ok, 1 mismatch, 2 usage/IO
+```
+
+A rewrite of any record the puller already holds changes the root, so the
+check exits 1. Copying the host's whole feed afresh would defeat this; the
+held copy is the point. If the log is re-initialised, the daemon rewrites the
+feed and records `mirror_leaf_feed_reset`; the puller must start a new epoch
+deliberately.
+
 ---
 
 ## Auditing

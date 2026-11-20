@@ -325,3 +325,39 @@ func writeRawRecords(t *testing.T, path string, records [][]byte) {
 		_, _ = f.Write(rec)
 	}
 }
+
+func TestLeafAccessorsMatchRootAt(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir, testKey(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for i := 0; i < 5; i++ {
+		if err := s.Append("INFO", "e", "test", map[string]int{"i": i}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if s.LeafCount() != 5 {
+		t.Fatalf("LeafCount %d", s.LeafCount())
+	}
+	all := s.LeavesFrom(0)
+	if len(all) != 5 || len(s.LeavesFrom(3)) != 2 || s.LeavesFrom(5) != nil {
+		t.Fatal("LeavesFrom ranges wrong")
+	}
+	if l, ok := s.LeafAt(4); !ok || l != all[4] {
+		t.Fatal("LeafAt(4) mismatch")
+	}
+	if _, ok := s.LeafAt(5); ok {
+		t.Fatal("LeafAt out of range returned ok")
+	}
+	all[0][0] ^= 0xff // a copy: must not alter the store
+	if l, _ := s.LeafAt(0); l == all[0] {
+		t.Fatal("LeavesFrom returned the store's own slice")
+	}
+	want, _ := s.RootAt(5)
+	got := merkle.Root(s.LeavesFrom(0))
+	if hex.EncodeToString(got[:]) != want {
+		t.Fatal("leaves do not reproduce RootAt")
+	}
+}

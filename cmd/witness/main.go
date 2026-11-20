@@ -81,6 +81,8 @@ func main() {
 		cmdExport()
 	case "verify-export":
 		cmdVerifyExport()
+	case "verify-leaves":
+		os.Exit(cmdVerifyLeaves(os.Args[2:], os.Stdout, os.Stderr))
 	case "migrate":
 		cmdMigrate()
 	case "soul":
@@ -113,6 +115,8 @@ Usage:
                                   Write a self-verifying copy of the log (JSON)
   witness verify-export FILE --pubkey HEX [--prior HEADFILE]...
                                   Check an export offline, with only the public key
+  witness verify-leaves --leaves FILE --size N --root HEX
+                                  Check a mirror leaf feed against a signed head (off-host)
   witness migrate [src-dir]       Import v1 log into v2 Merkle log (one-shot)
   witness soul sign [--dev]       Sign the soul file with the configured signer
   witness soul verify             Verify soul file signature against allowlist
@@ -514,7 +518,23 @@ func cmdStart() {
 			return
 		}
 		go func() {
-			err := mirrorBackend.Push(json.RawMessage(data))
+			// The leaf feed goes first and must cover the head: the head was
+			// read from disk before this snapshot, and the log only grows. A
+			// head is never published without the leaves that prove it.
+			var err error
+			if lp, ok := mirrorBackend.(mirror.LeafPublisher); ok {
+				reset, lerr := lp.PublishLeaves(s)
+				if reset && lerr == nil {
+					warn("mirror leaf feed disagreed with the log and was rewritten (re-initialised log or tampered mirror)")
+					_ = s.Append("WARN", "mirror_leaf_feed_reset", "mirror", map[string]interface{}{
+						"leaves": s.LeafCount(),
+					})
+				}
+				err = lerr
+			}
+			if err == nil {
+				err = mirrorBackend.Push(json.RawMessage(data))
+			}
 			if err != nil {
 				warn("mirror push: %v", err)
 			}
