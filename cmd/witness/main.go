@@ -276,7 +276,7 @@ func cmdInit() {
 		fmt.Printf("  Pipelock   : config written → %s\n", plCfg.ConfigFile)
 	}
 
-	if err := cfg.Save(config.Path()); err != nil {
+	if err := saveConfigIfMissing(cfg, config.Path()); err != nil {
 		fatal("save config: %v", err)
 	}
 
