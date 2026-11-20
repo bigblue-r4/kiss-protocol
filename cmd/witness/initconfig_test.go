@@ -30,7 +30,7 @@ func TestSaveConfigIfMissingLeavesExistingReadOnlyConfig(t *testing.T) {
 	if err := os.Chmod(dir, 0500); err != nil { // nor may it replace the file
 		t.Fatal(err)
 	}
-	defer os.Chmod(dir, 0700)
+	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
 
 	t.Setenv("SBH_AUDIT_PATH", "/from/env")
 	cfg, err := config.Load(path)
