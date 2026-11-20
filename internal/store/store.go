@@ -54,6 +54,10 @@ type Entry struct {
 // ErrMissingTreeHead reports a log that has entries but no tree-head.json. The
 // head is what makes a truncated or edited log detectable, so its absence is
 // treated as tampering, not as a fresh store.
+// syncLog forces appended log bytes to disk. A variable so tests can check
+// that it runs before the head is written.
+var syncLog = (*os.File).Sync
+
 var ErrMissingTreeHead = errors.New("tree head missing for a non-empty log: the head file was removed (log may have been truncated)")
 
 // ErrUnexpectedSigner reports a tree head signed by a key other than the
@@ -384,6 +388,15 @@ func (s *Store) Append(level, event, source string, data interface{}) error {
 	frame = append(frame, sealed...)
 	if _, err := s.f.Write(frame); err != nil {
 		return err
+	}
+	// The record must be on disk before a head that covers it. Without this
+	// sync a power cut can persist the new head but not the appended bytes
+	// (ext4 flushes a rename-replaced file early; a plain append can still
+	// sit in the page cache). The log is then behind its own head, Open
+	// reports "log tampered", and the witness never starts again. Seen on
+	// a real power cut 2026-11-19: 83639 records on disk, head said 83641.
+	if err := syncLog(s.f); err != nil {
+		return fmt.Errorf("store: sync log: %w", err)
 	}
 
 	s.leaves = append(s.leaves, leafHash(e))
