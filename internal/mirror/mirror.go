@@ -1,8 +1,10 @@
 // Package mirror implements backends for publishing and fetching the Witness
 // Merkle tree head to an operator-controlled external store.
 //
-// The mirror stores only the signed tree head JSON (< 1 KiB). It does not
-// store the encrypted log. The tree head is self-authenticating: it carries
+// The mirror stores the signed tree head JSON (< 1 KiB). It does not store
+// the encrypted log. The file backend also keeps a leaf-hash feed
+// (leaves.bin, 32 bytes per record; see leaves.go) so an off-host verifier
+// can check that each new head extends the history it already holds. The tree head is self-authenticating: it carries
 // an ed25519 signature and a BLAKE3-keyed MAC, so any holder of the operator
 // public key can verify it independently of the daemon.
 //
