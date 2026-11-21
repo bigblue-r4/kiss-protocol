@@ -68,9 +68,21 @@ var WatchFiles = []string{
 }
 
 // WatchDirs are directories that are shallow-hashed (one level, no recursion).
+// /usr/local/bin and /usr/local/sbin hold locally installed binaries, the
+// witness's own among them, which the distribution's directories do not.
 var WatchDirs = []string{
 	"/usr/bin", "/usr/sbin", "/bin", "/sbin",
+	"/usr/local/bin", "/usr/local/sbin",
 	"/etc/cron.d", "/etc/cron.daily", "/etc/init.d",
+}
+
+// Watch lists the paths a snapshot covers beyond the built-in WatchFiles and
+// WatchDirs (the operator's `watch_files` and `watch_dirs`). Dirs are hashed
+// one level deep, like WatchDirs. A path that cannot be read is skipped, as
+// for the built-in lists.
+type Watch struct {
+	Files []string
+	Dirs  []string
 }
 
 // Take captures the current machine state as a verified Snapshot.
@@ -82,6 +94,13 @@ var WatchDirs = []string{
 // `witness start`) would then recompute a different hash and reject the genesis
 // as tampered. Pass agents here so the hash and the recorded agents agree.
 func Take(machineID string, agents []AgentPresence) (*Snapshot, error) {
+	return TakeWith(machineID, agents, Watch{})
+}
+
+// TakeWith is Take with extra paths to watch. They are recorded in the
+// snapshot like the built-in ones, so drift checks them from then on; a
+// genesis taken earlier does not gain them.
+func TakeWith(machineID string, agents []AgentPresence, extra Watch) (*Snapshot, error) {
 	hostname, _ := os.Hostname()
 	s := &Snapshot{
 		Version:   1,
@@ -93,7 +112,7 @@ func Take(machineID string, agents []AgentPresence) (*Snapshot, error) {
 			Kernel:   kernelVersion(),
 			Hostname: hostname,
 		},
-		Files:           hashPaths(WatchFiles, WatchDirs),
+		Files:           hashPaths(joinUnique(WatchFiles, extra.Files), joinUnique(WatchDirs, extra.Dirs)),
 		Procs:           procList(),
 		Nets:            netInterfaces(),
 		Users:           userList(),
@@ -135,6 +154,23 @@ func kernelVersion() string {
 		return strings.TrimSpace(string(out))
 	}
 	return runtime.GOOS
+}
+
+// joinUnique appends the extra paths to base, skipping any already present,
+// so a path listed twice is recorded (and later checked) once.
+func joinUnique(base, extra []string) []string {
+	out := append([]string(nil), base...)
+	seen := map[string]bool{}
+	for _, p := range base {
+		seen[p] = true
+	}
+	for _, p := range extra {
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func hashPaths(files, dirs []string) []FileEntry {
