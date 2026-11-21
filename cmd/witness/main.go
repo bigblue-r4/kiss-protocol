@@ -179,6 +179,16 @@ func cmdInit() {
 	if err != nil {
 		fatal("load config: %v", err)
 	}
+	if err := cfg.ValidateWatch(); err != nil {
+		fatal("config: %v", err)
+	}
+	extra := genesis.Watch{Files: cfg.WatchFiles, Dirs: cfg.WatchDirs}
+	for _, p := range append(append([]string(nil), extra.Files...), extra.Dirs...) {
+		// A typo here would silently leave the path unwatched for the whole log.
+		if _, err := os.Stat(p); err != nil {
+			fmt.Printf("[witness] WARN: watch path %s cannot be read (%v); it will not be watched\n", p, err)
+		}
+	}
 
 	fmt.Println("[witness] Scanning for pre-existing AI agents…")
 	agents := genesis.ScanForAgents()
@@ -217,7 +227,7 @@ func cmdInit() {
 	// Fold the detected agents into the snapshot before it is hashed so the
 	// genesis hash covers them — otherwise `witness start` later recomputes a
 	// different hash and rejects a valid genesis as tampered.
-	snap, err := genesis.Take(mid, agents)
+	snap, err := genesis.TakeWith(mid, agents, extra)
 	if err != nil {
 		fatal("genesis: %v", err)
 	}

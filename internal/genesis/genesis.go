@@ -32,6 +32,14 @@ type Snapshot struct {
 	// An empty slice means genesis was taken cleanly before any agent.
 	// A non-empty slice means the snapshot is COMPROMISED — agents had prior access.
 	AgentsAtGenesis []AgentPresence `json:"agents_at_genesis"`
+	// WatchedDirs are the directories scanned at genesis (built-in plus the
+	// operator's). Drift rescans them for files that were not there. Empty
+	// in snapshots taken before it was recorded; see ScanDirs.
+	WatchedDirs []string `json:"watched_dirs,omitempty"`
+	// Unreadable are entries present in a watched directory at genesis that
+	// could not be hashed (no read permission, a link to a directory), so
+	// drift does not report them as new.
+	Unreadable []string `json:"unreadable,omitempty"`
 	// Hash is a SHA-256 of all other fields. Verified on load.
 	Hash string `json:"hash"`
 }
@@ -68,9 +76,21 @@ var WatchFiles = []string{
 }
 
 // WatchDirs are directories that are shallow-hashed (one level, no recursion).
+// /usr/local/bin and /usr/local/sbin hold locally installed binaries, the
+// witness's own among them, which the distribution's directories do not.
 var WatchDirs = []string{
 	"/usr/bin", "/usr/sbin", "/bin", "/sbin",
+	"/usr/local/bin", "/usr/local/sbin",
 	"/etc/cron.d", "/etc/cron.daily", "/etc/init.d",
+}
+
+// Watch lists the paths a snapshot covers beyond the built-in WatchFiles and
+// WatchDirs (the operator's `watch_files` and `watch_dirs`). Dirs are hashed
+// one level deep, like WatchDirs. A path that cannot be read is skipped, as
+// for the built-in lists.
+type Watch struct {
+	Files []string
+	Dirs  []string
 }
 
 // Take captures the current machine state as a verified Snapshot.
@@ -82,6 +102,13 @@ var WatchDirs = []string{
 // `witness start`) would then recompute a different hash and reject the genesis
 // as tampered. Pass agents here so the hash and the recorded agents agree.
 func Take(machineID string, agents []AgentPresence) (*Snapshot, error) {
+	return TakeWith(machineID, agents, Watch{})
+}
+
+// TakeWith is Take with extra paths to watch. They are recorded in the
+// snapshot like the built-in ones, so drift checks them from then on; a
+// genesis taken earlier does not gain them.
+func TakeWith(machineID string, agents []AgentPresence, extra Watch) (*Snapshot, error) {
 	hostname, _ := os.Hostname()
 	s := &Snapshot{
 		Version:   1,
@@ -93,12 +120,13 @@ func Take(machineID string, agents []AgentPresence) (*Snapshot, error) {
 			Kernel:   kernelVersion(),
 			Hostname: hostname,
 		},
-		Files:           hashPaths(WatchFiles, WatchDirs),
+		WatchedDirs:     joinUnique(WatchDirs, extra.Dirs),
 		Procs:           procList(),
 		Nets:            netInterfaces(),
 		Users:           userList(),
 		AgentsAtGenesis: agents,
 	}
+	s.Files, s.Unreadable = hashPaths(joinUnique(WatchFiles, extra.Files), s.WatchedDirs)
 	s.Hash = s.computeHash()
 	return s, nil
 }
@@ -137,8 +165,47 @@ func kernelVersion() string {
 	return runtime.GOOS
 }
 
-func hashPaths(files, dirs []string) []FileEntry {
-	var entries []FileEntry
+// joinUnique appends the extra paths to base, skipping any already present,
+// so a path listed twice is recorded (and later checked) once.
+func joinUnique(base, extra []string) []string {
+	out := append([]string(nil), base...)
+	seen := map[string]bool{}
+	for _, p := range base {
+		seen[p] = true
+	}
+	for _, p := range extra {
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// ScanDirs returns the directories drift scans for new files. legacy is true
+// for a snapshot taken before WatchedDirs was recorded: it gets the built-in
+// WatchDirs that hold at least one of its recorded files (so a directory
+// added to the built-in list later is not scanned against a genesis that never
+// looked at it), and it has no record of unreadable entries.
+func (s *Snapshot) ScanDirs() (dirs []string, legacy bool) {
+	if len(s.WatchedDirs) > 0 {
+		return s.WatchedDirs, false
+	}
+	has := map[string]bool{}
+	for _, f := range s.Files {
+		has[filepath.Dir(f.Path)] = true
+	}
+	for _, d := range WatchDirs {
+		if has[d] {
+			dirs = append(dirs, d)
+		}
+	}
+	return dirs, true
+}
+
+// hashPaths hashes the files and, one level deep, the directories. It also
+// returns the directory entries it could not hash.
+func hashPaths(files, dirs []string) (entries []FileEntry, unreadable []string) {
 	hc := NewHashCache()
 	for _, p := range files {
 		if e := hc.Hash(p); e != nil {
@@ -154,12 +221,15 @@ func hashPaths(files, dirs []string) []FileEntry {
 			if de.IsDir() {
 				continue // shallow only
 			}
-			if e := hc.Hash(d + "/" + de.Name()); e != nil {
+			p := d + "/" + de.Name()
+			if e := hc.Hash(p); e != nil {
 				entries = append(entries, *e)
+			} else {
+				unreadable = append(unreadable, p)
 			}
 		}
 	}
-	return entries
+	return entries, unreadable
 }
 
 // HashOneFile computes a FileEntry for the given path. Returns nil on error.

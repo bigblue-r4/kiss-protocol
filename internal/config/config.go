@@ -50,6 +50,29 @@ type Config struct {
 	// YubiKey PIV token (needs the piv build); "software" uses an on-disk key
 	// in the witness's own folder (pilot grade; see signer.NewSoftware).
 	Signer string `json:"signer,omitempty"`
+	// WatchFiles and WatchDirs add paths to the genesis snapshot beyond the
+	// built-in system lists (e.g. a toolchain under /opt). Dirs are hashed one
+	// level deep. Absolute paths only. They are read by `witness init` and
+	// take effect from the next genesis; a running log keeps the list its
+	// genesis recorded.
+	WatchFiles []string `json:"watch_files,omitempty"`
+	WatchDirs  []string `json:"watch_dirs,omitempty"`
+}
+
+// ValidateWatch rejects watch paths that are relative, empty or not clean.
+// A relative path would be resolved against wherever `witness init` ran.
+func (c *Config) ValidateWatch() error {
+	for _, l := range []struct {
+		name  string
+		paths []string
+	}{{"watch_files", c.WatchFiles}, {"watch_dirs", c.WatchDirs}} {
+		for i, p := range l.paths {
+			if p == "" || !filepath.IsAbs(p) || filepath.Clean(p) != p {
+				return fmt.Errorf("%s[%d]: %q must be a clean absolute path", l.name, i, p)
+			}
+		}
+	}
+	return nil
 }
 
 // EventFeed is one named feed: lines in Path are recorded as Source.
