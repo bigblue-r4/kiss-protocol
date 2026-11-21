@@ -82,7 +82,7 @@ func NewSet() *Set {
 // covered.
 func itemKey(c drift.Change) (string, error) {
 	switch c.Type {
-	case "file_changed", "file_mode_changed":
+	case "file_changed", "file_mode_changed", "file_added":
 		if c.Path == "" || c.New == "" {
 			return "", fmt.Errorf("%s needs path and new", c.Type)
 		}

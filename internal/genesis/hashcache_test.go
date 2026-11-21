@@ -106,7 +106,7 @@ func TestNewPassSeesChanges(t *testing.T) {
 
 func TestHashPathsRecordsEveryPath(t *testing.T) {
 	root := mergedUsr(t)
-	got := hashPaths(nil, []string{filepath.Join(root, "usr/bin"), filepath.Join(root, "bin")})
+	got, _ := hashPaths(nil, []string{filepath.Join(root, "usr/bin"), filepath.Join(root, "bin")})
 	// tool, other, tool-alias in each dir; dangling is unreadable and skipped, as before.
 	if len(got) != 6 {
 		t.Fatalf("got %d entries: %+v", len(got), got)

@@ -43,7 +43,9 @@ A file approval matches only that path **with that hash**. If snap refreshes
 again, the new hash is not approved and drift reports it again. That is the
 key property: an approval covers one known state, not a file for all time.
 (`file_removed` and `file_mode_changed` are approved the same way, by path +
-observed value.)
+observed value, and so is `file_added`, a file that appeared in a watched
+directory after genesis: path + its hash, or `unreadable` if the witness
+cannot read it.)
 
 ### 3.2 The log is the source of truth
 
