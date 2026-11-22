@@ -158,6 +158,9 @@ func latestDrift(entries []store.Entry) (store.Entry, []drift.Change, bool) {
 func describeChange(c drift.Change) string {
 	switch c.Type {
 	case "new_process":
+		if c.Path != "" {
+			return fmt.Sprintf("new_process  %s (%s)", c.Process, c.Path)
+		}
 		return fmt.Sprintf("new_process  %s", c.Process)
 	case "file_removed":
 		return fmt.Sprintf("file_removed %s", c.Path)

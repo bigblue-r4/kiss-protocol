@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 
 	"github.com/bigblue-r4/kiss-protocol/internal/drift"
@@ -79,7 +80,7 @@ func NewSet() *Set {
 
 // itemKey is what an approval pins for one change. A file approval includes
 // the observed value, so a later, different change to the same path is not
-// covered.
+// covered. Process approvals optionally pin the resolved executable path too.
 func itemKey(c drift.Change) (string, error) {
 	switch c.Type {
 	case "file_changed", "file_mode_changed", "file_added":
@@ -95,6 +96,14 @@ func itemKey(c drift.Change) (string, error) {
 	case "new_process":
 		if c.Process == "" {
 			return "", errors.New("new_process needs process")
+		}
+		if c.Path != "" {
+			if !filepath.IsAbs(c.Path) {
+				return "", errors.New("new_process executable path must be absolute")
+			}
+			// JSON tuple avoids ambiguous delimiters in names/paths.
+			pair, _ := json.Marshal([2]string{c.Process, c.Path})
+			return c.Type + "\x00path\x00" + string(pair), nil
 		}
 		return c.Type + "\x00" + c.Process, nil
 	}
@@ -150,7 +159,15 @@ func (s *Set) rebuild() {
 // one does.
 func (s *Set) Filter(changes []drift.Change) (unapproved []drift.Change, approved int) {
 	for _, c := range changes {
-		if k, err := itemKey(c); err == nil && s.items[k] {
+		k, err := itemKey(c)
+		covered := err == nil && s.items[k]
+		if err == nil && !covered && c.Type == "new_process" && c.Path != "" {
+			legacy := c
+			legacy.Path = ""
+			legacyKey, _ := itemKey(legacy)
+			covered = s.items[legacyKey]
+		}
+		if covered {
 			approved++
 			continue
 		}

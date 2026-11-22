@@ -14,8 +14,8 @@ const Unreadable = "unreadable"
 
 // Change describes a single detected deviation from genesis.
 type Change struct {
-	Type    string `json:"type"` // file_changed, file_removed, file_mode_changed, file_added, new_process
-	Path    string `json:"path,omitempty"`
+	Type    string `json:"type"`           // file_changed, file_removed, file_mode_changed, file_added, new_process
+	Path    string `json:"path,omitempty"` // file path, or resolved executable for new_process
 	Process string `json:"process,omitempty"`
 	Old     string `json:"old,omitempty"`
 	New     string `json:"new,omitempty"`
@@ -59,25 +59,9 @@ func Measure(snap *genesis.Snapshot) ([]Change, error) {
 
 	changes = append(changes, addedFiles(snap, hc)...)
 
-	// Report processes that are running now but were not at genesis.
-	// (Missing genesis processes are normal — they exit; new ones are notable.)
-	genesisProcs := make(map[string]bool, len(snap.Procs))
-	for _, p := range snap.Procs {
-		genesisProcs[p] = true
-	}
-	for _, p := range currentProcs() {
-		if !genesisProcs[p] {
-			changes = append(changes, Change{
-				Type:    "new_process",
-				Process: p,
-			})
-		}
-	}
-
+	changes = append(changes, processChanges(snap.Procs, currentProcs())...)
 	return changes, nil
 }
-
-func currentProcs() []string { return genesis.ProcNames() }
 
 // addedFiles reports files in the watched directories that genesis did not
 // record. A directory reached through a symlink to one already scanned
