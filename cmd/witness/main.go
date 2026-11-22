@@ -66,6 +66,10 @@ func main() {
 	}
 	switch os.Args[1] {
 	case "init":
+		if len(os.Args) > 2 && (os.Args[2] == "--help" || os.Args[2] == "-h") {
+			fmt.Print(initUsage)
+			return
+		}
 		cmdInit()
 	case "start":
 		cmdStart()
@@ -106,6 +110,7 @@ func usage() {
 
 Usage:
   witness init                    Take genesis snapshot, initialize Merkle log
+                                  Run init as the same user as the witness daemon.
   witness start [--dev]           Start the continuous witness daemon
   witness status                  Show current witness status
   witness verify [--pubkey HEX]   Walk Merkle log and verify integrity
@@ -135,6 +140,15 @@ Strict verification (verify, prove, audit):
 Peer mesh and enforcement: run 'enforcer --help'
 `, version)
 }
+
+const initUsage = `Usage: witness init
+
+Take a genesis snapshot and initialize the witness log.
+Run init as the same user as the witness daemon, with the same /proc visibility.
+Do not run init as root if the service runs as the witness user: different users
+may see different executable paths and cause persistent false process drift.
+Existing genesis is not rewritten by installing an updated witness binary.
+`
 
 // ── init ─────────────────────────────────────────────────────────────────────
 

@@ -1,12 +1,14 @@
 package genesis
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // ProcessIdentity is one observed command name and its procfs executable target.
@@ -45,12 +47,22 @@ func parseProcesses(out string, linux bool, readlink func(string) (string, error
 		if linux && readlink != nil {
 			// procfs already resolves the executed inode's path. Do not resolve a
 			// comm via PATH, or strip " (deleted)" and approve a replacement inode.
-			if target, err := readlink(filepath.Join("/proc", strconv.Itoa(pid), "exe")); err == nil && filepath.IsAbs(target) {
+			target, err := readlink(filepath.Join("/proc", strconv.Itoa(pid), "exe"))
+			switch {
+			case errors.Is(err, os.ErrNotExist), errors.Is(err, syscall.ESRCH):
+				// ps saw it, but it exited before procfs resolved its executable.
+				continue
+			case errors.Is(err, os.ErrPermission), errors.Is(err, syscall.EPERM):
+				// A live but inaccessible executable is a name-only observation.
+			case err == nil && filepath.IsAbs(target):
 				p.Path = target
+			default:
+				// Unexpected lookup failures must not hide a live process.
+				// Keep its name visible, without trusting an executable path.
 			}
 		}
-		// Unreadable/exited processes remain visible with no path. They cannot
-		// match a path-pinned approval; legacy name-only approvals still apply.
+		// Unresolved identities cannot match a path-pinned approval.
+
 		if !seen[p] {
 			seen[p] = true
 			procs = append(procs, p)

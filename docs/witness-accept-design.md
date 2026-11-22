@@ -80,6 +80,19 @@ retain their exact serialized bytes, integrity hashes, and name-only comparison.
 Installing a newer binary does not add identities to an existing genesis or
 change epoch 4. No genesis rewrite or epoch action is part of this code change.
 
+Run `witness init` as the same user as the witness daemon, with the same `/proc`
+visibility and service permissions. Root initialization followed by a uid-999
+service can baseline executable paths the service cannot read, causing persistent
+false process drift. The operator epoch scripts already initialize as the witness
+user; installing this change does not run init or change an existing genesis.
+
+When a process exits between `ps` and reading `/proc/PID/exe`, ENOENT or ESRCH
+causes that observation to be dropped rather than inventing a name-only identity.
+EACCES or EPERM keeps a name-only observation because visibility was refused.
+Other failed or invalid executable lookups also retain a name-only observation,
+so unexpected errors cannot hide a live process. Only ENOENT/ESRCH drops it;
+unsupported platforms retain their name-only collection behavior.
+
 On the OptiPlex, the witness uid 999 has CAP_DAC_READ_SEARCH but not
 CAP_SYS_PTRACE. Reading another user's `/proc/PID/exe` may therefore be denied:
 its own pipelock process is readable, while llama-server/ollama running as

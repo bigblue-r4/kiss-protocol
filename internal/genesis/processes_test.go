@@ -1,12 +1,13 @@
 package genesis
 
 import (
-	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strconv"
+	"syscall"
 	"testing"
 )
 
@@ -16,7 +17,7 @@ func TestProcessPathsPreserveSameNameDifferentExecutables(t *testing.T) {
 		if p, ok := targets[path]; ok {
 			return p, nil
 		}
-		return "", errors.New("denied")
+		return "", os.ErrPermission
 	})
 	want := []ProcessIdentity{{"pipelock", "/opt/pipelock"}, {"pipelock", "/tmp/pipelock"}, {"pipelock", "/opt/pipelock (deleted)"}, {"pipelock", ""}}
 	if !reflect.DeepEqual(got, want) {
@@ -53,4 +54,41 @@ func TestLiveProcessUsesProcExeTarget(t *testing.T) {
 		}
 	}
 	t.Fatalf("current executable %q absent from process identities", target)
+}
+
+func TestProcessReadlinkExitVersusPermission(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		keep bool
+	}{
+		{"ENOENT", syscall.ENOENT, false}, {"ESRCH", syscall.ESRCH, false},
+		{"EACCES", syscall.EACCES, true}, {"EPERM", syscall.EPERM, true},
+		{"EIO", syscall.EIO, true},
+		{"EINVAL", syscall.EINVAL, true},
+	} {
+		for _, wrapped := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/wrapped_%t", tc.name, wrapped), func(t *testing.T) {
+				err := tc.err
+				if wrapped {
+					err = &os.PathError{Op: "readlink", Path: "/proc/10/exe", Err: err}
+				}
+				got := parseProcesses("10 1 pipelock\n", true, func(string) (string, error) { return "", err })
+				if tc.keep {
+					if !reflect.DeepEqual(got, []ProcessIdentity{{Name: "pipelock"}}) {
+						t.Fatalf("permission refusal dropped: %+v", got)
+					}
+				} else if len(got) != 0 {
+					t.Fatalf("exited process invented identity: %+v", got)
+				}
+			})
+		}
+	}
+}
+
+func TestProcessRelativeExecutableTargetRemainsVisible(t *testing.T) {
+	got := parseProcesses("10 1 pipelock\n", true, func(string) (string, error) { return "relative/pipelock", nil })
+	if !reflect.DeepEqual(got, []ProcessIdentity{{Name: "pipelock"}}) {
+		t.Fatalf("untrusted executable target hid process: %+v", got)
+	}
 }
