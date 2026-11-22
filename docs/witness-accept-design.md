@@ -60,10 +60,32 @@ approval. Unsupported platforms likewise retain name-only observations.
 Existing name-only approvals still load, verify and match that name at any path.
 They are intentionally broad for backward compatibility: revoke an old name-only
 approval and approve a newly observed name+path item to get path pinning. Existing
-signed payloads and request version 1 are unchanged. Genesis remains a name-only
-baseline; this change strengthens approvals of **new-process drift**, not process
-identity at genesis. A path pin is not a content hash: replacing a binary at the
-same path is covered by file drift, not this process approval.
+signed payloads and request version 1 are unchanged. New genesis snapshots also
+record optional process identities as described below; existing snapshots retain
+their original name-only baseline. A path pin is not a content hash: replacing a
+binary at the same path is covered by file drift, not this process approval.
+
+#### Process identity at genesis
+
+New snapshots record `process_identities`: distinct `(name, path)` observations
+from the same collector and pass used for drift, alongside the existing `procs`
+name list. Paths are the `/proc/PID/exe` targets where readable. An empty path is
+an explicit unavailable observation, not a wildcard. With an identity-aware
+baseline, a same-name process at a different path is `new_process` drift; losing
+path visibility or gaining visibility after an unavailable baseline is also a
+new observation. A name may have several baseline executable paths.
+
+The optional top-level field is omitted when empty. Old snapshots without it
+retain their exact serialized bytes, integrity hashes, and name-only comparison.
+Installing a newer binary does not add identities to an existing genesis or
+change epoch 4. No genesis rewrite or epoch action is part of this code change.
+
+On the OptiPlex, the witness uid 999 has CAP_DAC_READ_SEARCH but not
+CAP_SYS_PTRACE. Reading another user's `/proc/PID/exe` may therefore be denied:
+its own pipelock process is readable, while llama-server/ollama running as
+`ollama` may remain name-only. This implementation does not add capabilities or
+change host policy. Legacy broad approvals can still filter new observations;
+replacing those approvals is a separate operator step after the witness update.
 
 ### 3.2 The log is the source of truth
 

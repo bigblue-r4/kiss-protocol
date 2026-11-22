@@ -87,4 +87,24 @@ func TestMeasuredSameNameDifferentPathIsUnapprovedDrift(t *testing.T) {
 	if n != 1 || len(left) != 1 || left[0].Path != paths[1] {
 		t.Fatalf("different binary hidden by approval: approved=%d drift=%+v", n, left)
 	}
+	// A path-aware genesis must not hide a different executable that reuses
+	// a name already present at baseline, even before approval filtering.
+	baseline := &genesis.Snapshot{
+		Procs: []string{"pipelock"}, WatchedDirs: []string{t.TempDir()},
+		ProcessIdentities: []genesis.ProcessIdentity{{Name: "pipelock", Path: paths[0]}},
+	}
+	later, err := drift.Measure(baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sameName []drift.Change
+	for _, c := range later {
+		if c.Type == "new_process" && c.Process == "pipelock" && (c.Path == paths[0] || c.Path == paths[1]) {
+			sameName = append(sameName, c)
+		}
+	}
+	if len(sameName) != 1 || sameName[0].Path != paths[1] {
+		t.Fatalf("genesis hid same-name replacement: %+v", sameName)
+	}
+
 }

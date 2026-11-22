@@ -59,7 +59,7 @@ func Measure(snap *genesis.Snapshot) ([]Change, error) {
 
 	changes = append(changes, addedFiles(snap, hc)...)
 
-	changes = append(changes, processChanges(snap.Procs, currentProcs())...)
+	changes = append(changes, processChanges(snap, currentProcs())...)
 	return changes, nil
 }
 

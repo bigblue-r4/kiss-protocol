@@ -84,7 +84,7 @@ func TestOldFormatSnapshotKeepsItsHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.WatchedDirs, s.Unreadable = nil, nil
+	s.WatchedDirs, s.Unreadable, s.ProcessIdentities = nil, nil, nil
 	s.Hash = s.computeHash()
 	raw, err := s.Bytes()
 	if err != nil {
@@ -133,6 +133,12 @@ func TestTakeRecordsScannedDirsAndUnreadable(t *testing.T) {
 	s, err := TakeWith("m", nil, Watch{Dirs: []string{dir}})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(s.ProcessIdentities) == 0 || len(s.Procs) == 0 {
+		t.Fatal("new genesis did not record process identities and legacy names")
+	}
+	if !s.Verify() {
+		t.Fatal("captured process identities not included in valid snapshot")
 	}
 	dirs, legacy := s.ScanDirs()
 	if legacy || dirs[len(dirs)-1] != dir {
