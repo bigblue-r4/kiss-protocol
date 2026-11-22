@@ -40,6 +40,9 @@ type Snapshot struct {
 	// could not be hashed (no read permission, a link to a directory), so
 	// drift does not report them as new.
 	Unreadable []string `json:"unreadable,omitempty"`
+	// ProcessIdentities records each name/executable observation at genesis.
+	// Omitted in legacy snapshots, preserving their original hash and behavior.
+	ProcessIdentities []ProcessIdentity `json:"process_identities,omitempty"`
 	// Hash is a SHA-256 of all other fields. Verified on load.
 	Hash string `json:"hash"`
 }
@@ -110,6 +113,7 @@ func Take(machineID string, agents []AgentPresence) (*Snapshot, error) {
 // genesis taken earlier does not gain them.
 func TakeWith(machineID string, agents []AgentPresence, extra Watch) (*Snapshot, error) {
 	hostname, _ := os.Hostname()
+	processes := Processes()
 	s := &Snapshot{
 		Version:   1,
 		Timestamp: time.Now().UTC(),
@@ -120,11 +124,12 @@ func TakeWith(machineID string, agents []AgentPresence, extra Watch) (*Snapshot,
 			Kernel:   kernelVersion(),
 			Hostname: hostname,
 		},
-		WatchedDirs:     joinUnique(WatchDirs, extra.Dirs),
-		Procs:           procList(),
-		Nets:            netInterfaces(),
-		Users:           userList(),
-		AgentsAtGenesis: agents,
+		WatchedDirs:       joinUnique(WatchDirs, extra.Dirs),
+		Procs:             processNames(processes),
+		ProcessIdentities: processes,
+		Nets:              netInterfaces(),
+		Users:             userList(),
+		AgentsAtGenesis:   agents,
 	}
 	s.Files, s.Unreadable = hashPaths(joinUnique(WatchFiles, extra.Files), s.WatchedDirs)
 	s.Hash = s.computeHash()
@@ -296,42 +301,12 @@ func (c *HashCache) Hash(path string) *FileEntry {
 	return &out
 }
 
-func procList() []string { return ProcNames() }
+// ProcNames preserves the name-only view used by existing callers.
+func ProcNames() []string { return processNames(Processes()) }
 
-// ProcNames lists the distinct command names of running processes, skipping
-// Linux kernel threads. Kernel threads (kthreadd, PID 2, and its children)
-// rename themselves after the work queue they are serving — kworker/0:1-events
-// becomes kworker/0:1-mm_percpu_wq — so a name-based comparison saw dozens of
-// "new processes" on every drift check on an idle machine. They are not
-// programs anyone launched, so they are left out of both genesis and drift.
-func ProcNames() []string {
-	out, err := exec.Command("ps", "-eo", "pid=,ppid=,comm=").Output()
-	if err != nil {
-		return nil
-	}
-	return parseProcNames(string(out), runtime.GOOS == "linux")
-}
-
-// parseProcNames reads `ps -eo pid=,ppid=,comm=` output. comm may contain
-// spaces, so everything after the second field is the name.
+// parseProcNames retains the name parser contract without resolving executables.
 func parseProcNames(out string, skipKernelThreads bool) []string {
-	var procs []string
-	seen := make(map[string]bool)
-	for _, line := range strings.Split(out, "\n") {
-		f := strings.Fields(line)
-		if len(f) < 3 {
-			continue
-		}
-		if skipKernelThreads && (f[0] == "2" || f[1] == "2") {
-			continue
-		}
-		name := strings.Join(f[2:], " ")
-		if !seen[name] {
-			seen[name] = true
-			procs = append(procs, name)
-		}
-	}
-	return procs
+	return processNames(parseProcesses(out, skipKernelThreads, nil))
 }
 
 func netInterfaces() []string {

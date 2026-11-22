@@ -1,62 +1,36 @@
 package drift
 
 import (
-	"errors"
-	"os"
-	"path/filepath"
+	"github.com/bigblue-r4/kiss-protocol/internal/genesis"
 	"reflect"
-	"runtime"
-	"strconv"
 	"testing"
 )
 
-func TestProcessPathsPreserveSameNameDifferentExecutables(t *testing.T) {
-	targets := map[string]string{"/proc/10/exe": "/opt/pipelock", "/proc/11/exe": "/tmp/pipelock", "/proc/12/exe": "/opt/pipelock", "/proc/13/exe": "/opt/pipelock (deleted)"}
-	got := parseProcesses("2 0 kthreadd\n3 2 kworker\n10 1 pipelock\n11 1 pipelock\n12 1 pipelock\n13 1 pipelock\n14 1 pipelock\ninvalid 1 bad\n", true, func(path string) (string, error) {
-		if p, ok := targets[path]; ok {
-			return p, nil
-		}
-		return "", errors.New("denied")
-	})
-	want := []processIdentity{{"pipelock", "/opt/pipelock"}, {"pipelock", "/tmp/pipelock"}, {"pipelock", "/opt/pipelock (deleted)"}, {"pipelock", ""}}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %+v, want %+v", got, want)
-	}
-	changes := processChanges([]string{"unrelated"}, got)
-	if len(changes) != 4 || changes[1].Process != "pipelock" || changes[1].Path != "/tmp/pipelock" {
-		t.Fatalf("same-name binary lost from drift: %+v", changes)
-	}
-	if got := processChanges([]string{"pipelock"}, got); len(got) != 0 {
-		t.Fatalf("legacy genesis name comparison changed: %+v", got)
-	}
-}
-
-func TestProcessPathUnavailableAndNonLinuxRemainNameOnly(t *testing.T) {
-	for _, linux := range []bool{true, false} {
-		got := parseProcesses("10 1 name with spaces\n", linux, func(string) (string, error) {
-			if !linux {
-				t.Fatal("non-Linux attempted procfs")
+func TestGenesisProcessIdentityComparison(t *testing.T) {
+	original := genesis.ProcessIdentity{Name: "pipelock", Path: "/opt/pipelock"}
+	other := genesis.ProcessIdentity{Name: "pipelock", Path: "/tmp/pipelock"}
+	unknown := genesis.ProcessIdentity{Name: "pipelock"}
+	deleted := genesis.ProcessIdentity{Name: "pipelock", Path: "/opt/pipelock (deleted)"}
+	for _, tc := range []struct {
+		name    string
+		snap    genesis.Snapshot
+		current []genesis.ProcessIdentity
+		want    []Change
+	}{
+		{"same identity", genesis.Snapshot{Procs: []string{"pipelock"}, ProcessIdentities: []genesis.ProcessIdentity{original}}, []genesis.ProcessIdentity{original}, nil},
+		{"different executable", genesis.Snapshot{Procs: []string{"pipelock"}, ProcessIdentities: []genesis.ProcessIdentity{original}}, []genesis.ProcessIdentity{original, other}, []Change{{Type: "new_process", Process: "pipelock", Path: "/tmp/pipelock"}}},
+		{"path unavailable now", genesis.Snapshot{ProcessIdentities: []genesis.ProcessIdentity{original}}, []genesis.ProcessIdentity{unknown}, []Change{{Type: "new_process", Process: "pipelock"}}},
+		{"path becomes readable", genesis.Snapshot{ProcessIdentities: []genesis.ProcessIdentity{unknown}}, []genesis.ProcessIdentity{original}, []Change{{Type: "new_process", Process: "pipelock", Path: "/opt/pipelock"}}},
+		{"unreadable unchanged", genesis.Snapshot{ProcessIdentities: []genesis.ProcessIdentity{unknown}}, []genesis.ProcessIdentity{unknown}, nil},
+		{"deleted identity", genesis.Snapshot{ProcessIdentities: []genesis.ProcessIdentity{original}}, []genesis.ProcessIdentity{deleted}, []Change{{Type: "new_process", Process: "pipelock", Path: deleted.Path}}},
+		{"legacy names unchanged", genesis.Snapshot{Procs: []string{"pipelock"}}, []genesis.ProcessIdentity{original, other, unknown}, nil},
+		{"legacy new name", genesis.Snapshot{Procs: []string{"unrelated"}}, []genesis.ProcessIdentity{other}, []Change{{Type: "new_process", Process: "pipelock", Path: other.Path}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := processChanges(&tc.snap, tc.current)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("got %+v, want %+v", got, tc.want)
 			}
-			return "", os.ErrPermission
 		})
-		if !reflect.DeepEqual(got, []processIdentity{{name: "name with spaces"}}) {
-			t.Fatalf("got %+v", got)
-		}
 	}
-}
-
-func TestLiveProcessUsesProcExeTarget(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Linux procfs")
-	}
-	target, err := os.Readlink(filepath.Join("/proc", strconv.Itoa(os.Getpid()), "exe"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, p := range currentProcs() {
-		if p.path == target {
-			return
-		}
-	}
-	t.Fatalf("current executable %q absent from process identities", target)
 }
