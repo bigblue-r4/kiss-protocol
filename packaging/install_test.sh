@@ -50,7 +50,9 @@ new_fixture() {
 # A standalone script with an unverified helper must fail before any install.
 new_fixture standalone
 mkdir -p "$F/packaging"
-printf 'echo UNVERIFIED >> "$CALLS"\n' > "$F/packaging/witness-service.sh"
+cat > "$F/packaging/witness-service.sh" <<'UNVERIFIED'
+echo UNVERIFIED >> "$CALLS"
+UNVERIFIED
 if bash "$F/install.sh" > "$W/refusal" 2>&1; then echo 'standalone accepted' >&2; exit 1; fi
 grep -q 'run install.sh from a clone or release bundle' "$W/refusal"
 [[ ! -s "$CALLS" ]] || { echo 'standalone caused side effects' >&2; exit 1; }
