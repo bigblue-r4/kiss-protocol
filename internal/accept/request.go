@@ -1,7 +1,8 @@
 // Package accept records operator approvals of known drift (`witness accept`).
 //
 // An approval pins exact observed values: a file path with the hash it now
-// has, a removed path, a path with its new mode, or a process name. Drift that
+// has, a removed path, a path with its new mode, or a process name and optional
+// resolved executable path. Legacy name-only process approvals remain broad. Drift that
 // matches an approval is no longer listed on every tick; drift that does not
 // match (a later change to the same file, say) still is.
 //

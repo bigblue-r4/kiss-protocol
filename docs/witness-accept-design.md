@@ -36,7 +36,7 @@ An approval pins **exact** observed values:
 
 ```json
 {"type":"file_changed","path":"/usr/bin/snap","new":"726468b8…"}
-{"type":"new_process","process":"ollama"}
+{"type":"new_process","process":"ollama","path":"/usr/local/bin/ollama"}
 ```
 
 A file approval matches only that path **with that hash**. If snap refreshes
@@ -46,6 +46,24 @@ key property: an approval covers one known state, not a file for all time.
 observed value, and so is `file_added`, a file that appeared in a watched
 directory after genesis: path + its hash, or `unreadable` if the witness
 cannot read it.)
+
+New Linux process drift records the command name and the executable target read
+from `/proc/PID/exe` in `path`. An approval with both fields matches only that
+name and exact resolved path. Different executables with the same name are
+reported separately, so approving `/opt/pipelock` does not hide `/tmp/pipelock`.
+The CLI displays the path before signing. The procfs target is used directly,
+including any ` (deleted)` suffix; it is not inferred from the command name or
+looked up through PATH. If the target cannot be read (permissions or process
+exit), drift still reports the name without a path, which cannot match a pinned
+approval. Unsupported platforms likewise retain name-only observations.
+
+Existing name-only approvals still load, verify and match that name at any path.
+They are intentionally broad for backward compatibility: revoke an old name-only
+approval and approve a newly observed name+path item to get path pinning. Existing
+signed payloads and request version 1 are unchanged. Genesis remains a name-only
+baseline; this change strengthens approvals of **new-process drift**, not process
+identity at genesis. A path pin is not a content hash: replacing a binary at the
+same path is covered by file drift, not this process approval.
 
 ### 3.2 The log is the source of truth
 
