@@ -64,6 +64,8 @@ func TestProcessReadlinkExitVersusPermission(t *testing.T) {
 	}{
 		{"ENOENT", syscall.ENOENT, false}, {"ESRCH", syscall.ESRCH, false},
 		{"EACCES", syscall.EACCES, true}, {"EPERM", syscall.EPERM, true},
+		{"EIO", syscall.EIO, true},
+		{"EINVAL", syscall.EINVAL, true},
 	} {
 		for _, wrapped := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/wrapped_%t", tc.name, wrapped), func(t *testing.T) {
@@ -81,5 +83,12 @@ func TestProcessReadlinkExitVersusPermission(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestProcessRelativeExecutableTargetRemainsVisible(t *testing.T) {
+	got := parseProcesses("10 1 pipelock\n", true, func(string) (string, error) { return "relative/pipelock", nil })
+	if !reflect.DeepEqual(got, []ProcessIdentity{{Name: "pipelock"}}) {
+		t.Fatalf("untrusted executable target hid process: %+v", got)
 	}
 }

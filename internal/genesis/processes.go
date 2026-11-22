@@ -57,11 +57,11 @@ func parseProcesses(out string, linux bool, readlink func(string) (string, error
 			case err == nil && filepath.IsAbs(target):
 				p.Path = target
 			default:
-				// No usable observation; do not invent an empty-path identity.
-				continue
+				// Unexpected lookup failures must not hide a live process.
+				// Keep its name visible, without trusting an executable path.
 			}
 		}
-		// Permission-denied identities cannot match a path-pinned approval.
+		// Unresolved identities cannot match a path-pinned approval.
 
 		if !seen[p] {
 			seen[p] = true

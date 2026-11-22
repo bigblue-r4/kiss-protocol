@@ -89,8 +89,9 @@ user; installing this change does not run init or change an existing genesis.
 When a process exits between `ps` and reading `/proc/PID/exe`, ENOENT or ESRCH
 causes that observation to be dropped rather than inventing a name-only identity.
 EACCES or EPERM keeps a name-only observation because visibility was refused.
-Other failed or invalid executable lookups provide no usable observation and are
-omitted; unsupported platforms retain their name-only collection behavior.
+Other failed or invalid executable lookups also retain a name-only observation,
+so unexpected errors cannot hide a live process. Only ENOENT/ESRCH drops it;
+unsupported platforms retain their name-only collection behavior.
 
 On the OptiPlex, the witness uid 999 has CAP_DAC_READ_SEARCH but not
 CAP_SYS_PTRACE. Reading another user's `/proc/PID/exe` may therefore be denied:
