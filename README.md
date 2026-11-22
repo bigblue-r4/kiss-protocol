@@ -54,6 +54,16 @@ witness start
 enforcer start
 ```
 
+Run the installer only from a complete checkout or source release bundle that
+matches the revision you reviewed. To select a release, check out its explicit
+`vX.Y.Z` tag before running the installer. The witness binary is built from that
+source; its soul, service helper and units come only from the same directory.
+A standalone `install.sh` or incomplete bundle fails before installing anything.
+The current release signatures cover binaries, not those helper files, so the
+installer deliberately has no remote helper fallback. Do not pipe a downloaded
+installer into a root shell. Go dependency resolution and the separate Pipelock
+installation can still need network access; this is not an offline installer.
+
 That's it. Witness is monitoring. The enforcer connects peers and handles cross-node alerts.
 
 ---

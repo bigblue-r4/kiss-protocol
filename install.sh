@@ -29,10 +29,8 @@ set -euo pipefail
 # ══════════════════════════════════════════════════════════════════════════════
 
 PIPELOCK_REPO="github.com/luckyPipewrench/pipelock/cmd/pipelock@latest"
-WITNESS_REPO="github.com/bigblue-r4/kiss-protocol/cmd/witness"
 
 INSTALL_DIR="/usr/local/bin"
-SYSTEMD_DIR="/etc/systemd/system"
 
 
 # ── Parse args ──────────────────────────────────────────────────────────────
@@ -53,6 +51,17 @@ fatal() { echo "[install] FATAL: $*" >&2; exit 1; }
 require() {
     command -v "$1" &>/dev/null || fatal "'$1' is required but not installed."
 }
+
+# Only complete, operator-selected checkouts/source bundles are supported.
+# Release blob signatures do not cover the helper/unit/soul, so a standalone
+# script cannot authenticate them. Refuse before installing even Pipelock.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+for bundled in go.mod go.sum cmd/witness/main.go payload/witness/default-soul.toml \
+    packaging/witness-service.sh packaging/systemd/witness.service \
+    packaging/launchd/ai.sgail.harborlight.witness.plist; do
+    [[ -f "$SCRIPT_DIR/$bundled" ]] || fatal \
+        "Missing co-located $bundled; run install.sh from a clone or release bundle. Standalone downloads are not verified."
+done
 
 # ── Preflight ────────────────────────────────────────────────────────────────
 info "Checking prerequisites…"
@@ -78,40 +87,22 @@ fi
 # ── Step 2: Build and install witness CLI ────────────────────────────────────
 info "Building SGAIL Labs Harborlight Firewall witness CLI…"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# If we're running from the repo, build locally.
-if [[ -f "$SCRIPT_DIR/go.mod" ]]; then
-    cd "$SCRIPT_DIR"
-    go mod tidy
-    go build -trimpath -ldflags="-s -w" -o witness ./cmd/witness
-    install -m 0755 witness "$INSTALL_DIR/witness"
-    rm -f witness
-    info "witness CLI built from source → $INSTALL_DIR/witness"
-else
-    # Fall back to go install from the module registry.
-    GOBIN="$INSTALL_DIR" go install "${WITNESS_REPO}@latest" \
-        || fatal "Failed to install witness CLI."
-    info "witness CLI installed → $INSTALL_DIR/witness"
-fi
-
-# ── Step 3: Bundled files (soul, hardened unit) ──────────────────────────────
-RAW="https://raw.githubusercontent.com/bigblue-r4/kiss-protocol/main"
-fetch_if_missing() {   # $1 = path in this repo; prints a local path to it
-    if [[ -f "$SCRIPT_DIR/$1" ]]; then echo "$SCRIPT_DIR/$1"; return; fi
-    local tmp; tmp=$(mktemp)
-    curl -fsSL "$RAW/$1" -o "$tmp" || fatal "Could not fetch $1. Clone the repo and run install.sh from it."
-    echo "$tmp"
-}
-SOUL_SRC=$(fetch_if_missing payload/witness/default-soul.toml)
+# Build this checkout's revision; never combine a registry @latest witness
+# with packaging downloaded from main. Do not rewrite the selected module files.
+cd "$SCRIPT_DIR"
+go build -mod=readonly -trimpath -ldflags="-s -w" -o witness ./cmd/witness
+install -m 0755 witness "$INSTALL_DIR/witness"
+rm -f witness
+info "witness CLI built from co-located source → $INSTALL_DIR/witness"
+SOUL_SRC="$SCRIPT_DIR/payload/witness/default-soul.toml"
 
 # ── Step 4: Set up and start the witness ─────────────────────────────────────
 if [[ "$(uname -s)" == "Linux" ]] && command -v systemctl &>/dev/null; then
     [[ "$(id -u)" -eq 0 ]] || fatal "Run with sudo: the witness service runs under its own 'witness' user."
     info "Setting up the hardened witness service…"
-    UNIT_SRC=$(fetch_if_missing packaging/systemd/witness.service)
+    UNIT_SRC="$SCRIPT_DIR/packaging/systemd/witness.service"
     # shellcheck source=packaging/witness-service.sh
-    source "$(fetch_if_missing packaging/witness-service.sh)"
+    source "$SCRIPT_DIR/packaging/witness-service.sh"
     witness_service_setup "$INSTALL_DIR/witness" "$SOUL_SRC" "$UNIT_SRC" start
     info "Check status: systemctl status witness"
 
