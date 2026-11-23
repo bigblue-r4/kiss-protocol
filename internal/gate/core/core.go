@@ -717,6 +717,14 @@ func (c *Core) CommitWaitTimeout(res *Reservation) []breaker.Event {
 	return c.tick(nil, "commit_wait_timeout", proto.Scope{Kind: proto.ScopeClass, Value: res.Req.Class}, c.now())
 }
 
+// Synced reports whether Sync has completed a pass over synced evidence.
+// Decide denies GATE_NOT_SYNCED until it has.
+func (c *Core) Synced() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.synced
+}
+
 // Pending returns the number of admitted, unreleased reservations.
 func (c *Core) Pending() int {
 	c.mu.Lock()
