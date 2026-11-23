@@ -57,7 +57,7 @@ For each attacker capability above, state what Witness guarantees and by what me
 ## Trust roots
 
 - **Signer pubkey allowlist** — `~/.witness/trust/signers.txt` (one ed25519 pubkey per line, with operator-assigned label). Created by the installer; placed by a human before `witness init`. Never network-fetched, never auto-updated. Owned by the `witness` system user, mode 0400. A compromised allowlist means a compromised daemon — this is the bootstrap trust root, and its integrity cannot be verified from within the system it protects. Operators must verify it out-of-band (e.g., compare checksum against a trusted copy at setup time).
-- **Reproducible-build attestation** — operators verify the binary they run matches a published artifact hash signed by the release key. Verification command (Phase 7): `cosign verify-blob --key witness-release.pub --signature witness_linux_amd64.sig witness_linux_amd64`
+- **Reproducible-build attestation** — operators verify the binary they run matches a published release artifact. Releases are signed keylessly by the release workflow's GitHub OIDC identity (there is no release key file): `cosign verify-blob --certificate-identity-regexp "https://github.com/bigblue-r4/kiss-protocol/.github/workflows/release.yml" --certificate-oidc-issuer "https://token.actions.githubusercontent.com" --signature witness_linux_amd64.sig --certificate witness_linux_amd64.pem witness_linux_amd64`. Build provenance: `gh attestation verify witness_linux_amd64 --repo bigblue-r4/kiss-protocol`. See README "Verifying a release".
 
 ## Operational assumptions
 
