@@ -63,12 +63,16 @@ The current release signatures cover binaries, not those helper files, so the
 installer deliberately has no remote helper fallback. Do not pipe a downloaded
 installer into a root shell. Go dependency resolution and the separate Pipelock
 installation can still need network access; this is not an offline installer.
-Pipelock installation defaults to the reviewed upstream release `v3.8.0`, using
-`go install` with that exact version and Go's normal module checksum verification.
-Use `--pipelock-version vX.Y.Z` or `PIPELOCK_VERSION=vX.Y.Z` to select another exact
-release; moving refs and malformed versions are rejected before installation.
-An existing Pipelock binary is never reinstalled: its version is printed beside
-the pin, with a warning if it differs or cannot be recognized. The Go minimum is
+Pipelock installation is pinned to upstream release `v3.8.0`, commit
+`556048c1c18d84f7d61d28f686220178a4ff2c4d`, using Go's canonical module version
+`v1.5.1-0.20261109171901-556048c1c18d`. Upstream's module path lacks `/v3`, so
+`@v3.8.0` is invalid and the old `@latest` resolves to the much older `v1.5.0`.
+The pseudo-version selects the release commit with Go's normal module checksum
+verification; this installer does not alter GONOSUMDB or GOFLAGS. Version overrides
+are intentionally unsupported: a future pin change requires review.
+An existing Pipelock binary is never reinstalled. Its reported version is shown
+beside the module pin; a differing or unrecognized string (including development
+builds) produces a warning without failing or reinstalling. The Go minimum is
 read from the co-located `go.mod` (currently 1.26.0); git is needed for Go build VCS
 metadata in a checkout. curl is not required by this installer.
 
