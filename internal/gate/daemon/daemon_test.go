@@ -498,7 +498,8 @@ func TestRestartStaysTrippedAndQuorumReset(t *testing.T) {
 	}
 	d2.Close()
 	e.start()
-	e.waitFor("rebuilt", func() bool { return e.status().Restored })
+	// Synced as well as Restored: the decide below must get past GATE_NOT_SYNCED.
+	e.waitFor("rebuilt and synced", func() bool { s := e.status(); return s.Restored && s.Synced })
 	s := e.status()
 	if len(s.OpenScopes) != 2 || s.Epoch < epoch {
 		t.Fatalf("after restart %+v (epoch before %d)", s, epoch)

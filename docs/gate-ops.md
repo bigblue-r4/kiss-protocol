@@ -197,8 +197,9 @@ Status includes `synced`, `breaker_restored`, `head_size`, `head_age_seconds`,
 `epoch`, `open_scopes`, `pending`, policy hash, and error fields such as
 `policy_error`, `feed_error`, `chain_failure`, `poll_error` and `deny_all`.
 A running systemd unit is not proof of readiness: invalid policy or a failed
-feed can leave it alive in deny-all. Until verified evidence and breaker restore
-are ready, decisions return `GATE_NOT_SYNCED`. Head age measures time since a
+feed can leave it alive in deny-all. Until verified evidence has been read by
+the decision core and the breaker is restored, `synced` is false and decisions
+return `GATE_NOT_SYNCED`. Head age measures time since a
 larger verified head, not the unsigned witness timestamp. A feed write failure
 is sticky; repair access/storage and restart. Never erase state to clear a trip.
 

@@ -592,7 +592,11 @@ func (d *Daemon) Status() Status {
 	}
 	if v != nil {
 		st := v.Status()
-		s.Synced, s.HeadSize = st.Synced, st.Size
+		// Synced means Decide would not deny GATE_NOT_SYNCED: the evidence view
+		// is synced AND the core has consumed it. Poll marks the view synced
+		// before it runs core.Sync, so the view alone briefly reports ready while
+		// decisions still deny.
+		s.Synced, s.HeadSize = st.Synced && c.Synced(), st.Size
 		if st.HeadAge < time.Duration(1<<62) {
 			s.HeadAgeSec = st.HeadAge.Seconds()
 		} else {
