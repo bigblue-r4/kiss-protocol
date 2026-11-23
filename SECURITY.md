@@ -75,6 +75,11 @@ cosign verify-blob \
 
 SHA-256 checksums are also published alongside each release artifact.
 
+Each binary also has a GitHub build-provenance attestation, checked with
+`gh attestation verify <binary> --repo bigblue-r4/kiss-protocol`, and a signed
+CycloneDX SBOM, `<binary>.cdx.json`, listing the Go modules and Go version
+compiled into it.
+
 ## Security Architecture
 
 See [`docs/threat-model.md`](docs/threat-model.md) for the full threat model,
