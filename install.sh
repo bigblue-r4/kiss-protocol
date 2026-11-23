@@ -2,7 +2,7 @@
 # install.sh — SGAIL Labs Harborlight Firewall installer
 #
 # Installs Pipelock, then the witness CLI, then runs genesis init.
-# Requires: Go 1.21+, git, curl
+# Requires: Go version declared in the co-located go.mod; git for build VCS stamping.
 # Run as root or with sudo for full three-tier backup support.
 #
 # Usage:
@@ -28,7 +28,12 @@ set -euo pipefail
 #  and you will be asked to confirm before proceeding.
 # ══════════════════════════════════════════════════════════════════════════════
 
-PIPELOCK_REPO="github.com/luckyPipewrench/pipelock/cmd/pipelock@latest"
+# Upstream release v3.8.0 is commit 556048c1c18d84f7d61d28f686220178a4ff2c4d.
+# Its module lacks /v3, so the v3 tag is not a valid Go module version.
+# This canonical pseudo-version selects that exact release commit instead.
+[[ -z "${PIPELOCK_VERSION+x}" ]] || { echo 'Pipelock version overrides are not supported; use the reviewed installer pin.' >&2; exit 1; }
+PIPELOCK_VERSION="v1.5.1-0.20261109171901-556048c1c18d"
+PIPELOCK_REPO="github.com/luckyPipewrench/pipelock/cmd/pipelock"
 
 INSTALL_DIR="/usr/local/bin"
 
@@ -66,10 +71,11 @@ done
 # ── Preflight ────────────────────────────────────────────────────────────────
 info "Checking prerequisites…"
 require go
-require git
+require git  # go build records VCS metadata when installing from a Git checkout.
 
 GO_VERSION=$(go version | awk '{print $3}' | sed 's/go//')
-REQUIRED="1.22"
+REQUIRED=$(awk '$1 == "go" {print $2; exit}' "$SCRIPT_DIR/go.mod")
+[[ "$REQUIRED" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || fatal "Missing or invalid Go version in go.mod."
 if [[ "$(printf '%s\n' "$REQUIRED" "$GO_VERSION" | sort -V | head -1)" != "$REQUIRED" ]]; then
     fatal "Go $REQUIRED+ required (found $GO_VERSION)"
 fi
@@ -77,9 +83,13 @@ fi
 # ── Step 1: Install Pipelock ─────────────────────────────────────────────────
 info "Installing Pipelock…"
 if command -v pipelock &>/dev/null; then
-    info "Pipelock already installed: $(pipelock version 2>/dev/null || echo 'unknown version')"
+    INSTALLED_PIPELOCK=$(pipelock version 2>/dev/null || true)
+    info "Pipelock already installed: ${INSTALLED_PIPELOCK:-unknown version} (pinned module $PIPELOCK_VERSION; skipping install)"
+    if [[ " $INSTALLED_PIPELOCK " != *" $PIPELOCK_VERSION "* ]]; then
+        warn "Installed Pipelock reports '${INSTALLED_PIPELOCK:-unknown version}', not pinned module '$PIPELOCK_VERSION' (upstream v3.8.0); keeping the existing binary."
+    fi
 else
-    GOBIN="$INSTALL_DIR" go install "$PIPELOCK_REPO" \
+    GOBIN="$INSTALL_DIR" go install "${PIPELOCK_REPO}@${PIPELOCK_VERSION}" \
         || fatal "Failed to install Pipelock. Check your internet connection and Go setup."
     info "Pipelock installed → $INSTALL_DIR/pipelock"
 fi
