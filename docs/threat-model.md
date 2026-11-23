@@ -74,7 +74,8 @@ In rough priority order:
   protects. Operators must verify it out-of-band.
 
 - **Reproducible-build attestation** — operators verify the binary they run matches a published
-  artifact hash signed by the release key:
+  release artifact, signed keylessly by the release workflow's GitHub OIDC identity (there is no
+  release key file):
   ```
   cosign verify-blob \
     --certificate-identity-regexp \
