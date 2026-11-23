@@ -280,6 +280,14 @@ cosign verify-blob \
 sha256sum -c witness_linux_amd64.sha256
 ```
 
+Each release also carries:
+
+- **Build provenance** for every binary: a GitHub attestation saying which workflow, commit and tag built it. Check it with the [GitHub CLI](https://cli.github.com/):
+  ```bash
+  gh attestation verify witness_linux_amd64 --repo bigblue-r4/kiss-protocol
+  ```
+- **An SBOM** for every binary, `<binary>.cdx.json` (CycloneDX), listing the Go modules and Go version compiled into it. It is signed like the binary; verify it with the `cosign verify-blob` command above, using `.cdx.json.sig` and `.cdx.json.pem`.
+
 ---
 
 ## Reproducible builds

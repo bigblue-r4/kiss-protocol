@@ -14,7 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write    # create GitHub release
-      id-token: write    # cosign OIDC keyless signing
+      id-token: write    # cosign OIDC keyless signing + build provenance
+      attestations: write  # GitHub build-provenance attestations (H08 C07)
     # cosign-installer stays on v3 (cosign v2 sign-blob) and action-gh-release on
     # v2 — their next majors are breaking (cosign v3 switched sign-blob to a
     # bundle format). Both are Node20 actions, so keep the force-node24 shim.
@@ -53,6 +54,19 @@ jobs:
             done
           done
 
+      # H08 C07: a CycloneDX SBOM per binary, read from the Go build info embedded
+      # in that exact binary (its modules plus the Go standard library version).
+      # Pinned by version; the Go checksum database verifies the tool.
+      - name: Generate SBOMs (CycloneDX)
+        run: |
+          set -euo pipefail
+          for f in dist/witness_* dist/enforcer_*; do
+            [[ "$f" == *.sha256 ]] && continue
+            go run github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0 bin \
+              -json -std -version "${GITHUB_REF_NAME}" -output "${f}.cdx.json" "$f"
+          done
+
+      # Signs the binaries and their SBOMs.
       - name: Sign artifacts with cosign (keyless OIDC)
         run: |
           for f in dist/witness_* dist/enforcer_*; do
@@ -63,6 +77,22 @@ jobs:
               --output-certificate "${f}.pem" \
               "$f"
           done
+
+      # H08 C07: SLSA build provenance for each binary, recorded by GitHub
+      # (verify with `gh attestation verify`). Keeps the cosign signatures above.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          # The eight binaries by exact name (not the .sha256/.sig/.pem/.cdx.json sidecars).
+          subject-path: |
+            dist/witness_linux_amd64
+            dist/witness_linux_arm64
+            dist/witness_darwin_amd64
+            dist/witness_darwin_arm64
+            dist/enforcer_linux_amd64
+            dist/enforcer_linux_arm64
+            dist/enforcer_darwin_amd64
+            dist/enforcer_darwin_arm64
 
       - name: Extract changelog entry
         id: changelog
@@ -102,3 +132,11 @@ jobs:
             ```bash
             sha256sum -c witness_linux_amd64.sha256
             ```
+
+            Check the build provenance (which workflow, commit and tag built the binary) with the [GitHub CLI](https://cli.github.com/):
+
+            ```bash
+            gh attestation verify witness_linux_amd64 --repo bigblue-r4/kiss-protocol
+            ```
+
+            Each binary also ships a CycloneDX SBOM, `<binary>.cdx.json`, listing the Go modules and Go version it was built with. It is signed the same way: use `.cdx.json.sig` and `.cdx.json.pem` with the command above.
