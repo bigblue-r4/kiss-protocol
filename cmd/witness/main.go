@@ -57,7 +57,7 @@ import (
 	"github.com/bigblue-r4/kiss-protocol/internal/store"
 )
 
-const version = "3.3.3"
+const version = "3.4.0"
 
 func main() {
 	if len(os.Args) < 2 {
