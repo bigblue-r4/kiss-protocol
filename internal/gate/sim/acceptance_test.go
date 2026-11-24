@@ -300,7 +300,14 @@ func TestAcceptance18ConcurrentBudget(t *testing.T) {
 	close(start)
 	wg.Wait()
 	close(out)
-	n := 0
+	// The global budget admits 100. The first request refused for budget
+	// (VELOCITY_EXCEEDED) trips the breaker, and every admitted request still
+	// waiting to be signed is then refused at revalidation (fail closed). So
+	// any number of tokens from 0 to 100 is correct; what must hold is that no
+	// more than 100 are issued and that the budget, not something else,
+	// stopped the rest: every admitted request ends as an allow or a
+	// REVALIDATION_FAILED, and at least 100 were admitted.
+	n, revalidated := 0, 0
 	for d := range out {
 		if d.Outcome == "allow" {
 			allowed(t, d)
@@ -310,12 +317,18 @@ func TestAcceptance18ConcurrentBudget(t *testing.T) {
 			if !contains(d.Reasons, "VELOCITY_EXCEEDED") && !contains(d.Reasons, "BREAKER_OPEN") && !contains(d.Reasons, "REVALIDATION_FAILED") {
 				t.Fatalf("unexpected %+v", d)
 			}
+			if contains(d.Reasons, "REVALIDATION_FAILED") {
+				revalidated++
+			}
 		}
 	}
-	if n == 0 || n > 100 {
+	if n > 100 {
 		t.Fatalf("issued %d against budget 100", n)
 	}
-	t.Logf("issued %d of 200, budget 100", n)
+	if n+revalidated < 100 {
+		t.Fatalf("admitted %d (issued %d, refused at revalidation %d) against budget 100", n+revalidated, n, revalidated)
+	}
+	t.Logf("issued %d of 200, budget 100 (%d admitted then refused at revalidation)", n, revalidated)
 }
 func TestAcceptance19TripDuringCommitWait(t *testing.T) {
 	e := running(t, true, nil)
