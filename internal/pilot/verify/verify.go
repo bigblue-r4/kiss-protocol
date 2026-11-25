@@ -431,20 +431,26 @@ func (r *Result) completeness(parsed []map[string]json.RawMessage, size uint64) 
 	for _, id := range ids {
 		b := batches[id]
 		missing := 0
+		var dups []string
 		for i := 0; i < b.count; i++ {
 			switch n := b.seen[i]; {
 			case n == 0:
 				missing++
 			case n > 1:
-				cp.DuplicateBatch = append(cp.DuplicateBatch, fmt.Sprintf("batch %s entry %d recorded %d times", id, i, n))
+				dups = append(dups, fmt.Sprintf("batch %s entry %d recorded %d times", id, i, n))
 			}
+		}
+		if len(dups) == b.count && b.count > 1 {
+			cp.DuplicateBatch = append(cp.DuplicateBatch, fmt.Sprintf("batch %s: all %d entries recorded %d times (the whole batch was delivered again)", id, b.count, b.seen[0]))
+		} else {
+			cp.DuplicateBatch = append(cp.DuplicateBatch, dups...)
 		}
 		if missing > 0 {
 			cp.IncompleteBatch = append(cp.IncompleteBatch, fmt.Sprintf("batch %s: %d of %d entries missing", id, missing, b.count))
 		}
 	}
 	title := "Completeness indicators (disclosed, not proven)"
-	detail := fmt.Sprintf("%d events, %d rejected lines, %d batches; %d incomplete batches, %d duplicate entries, %d sequence gaps, %d repeats; %d records after the checkpoint not yet covered",
+	detail := fmt.Sprintf("%d events, %d rejected lines, %d batches; %d incomplete batches, %d duplicate-delivery findings, %d sequence gaps, %d repeats; %d records after the checkpoint not yet covered",
 		cp.Events, cp.Rejected, cp.Batches, len(cp.IncompleteBatch), len(cp.DuplicateBatch), len(cp.SequenceGaps), len(cp.SequenceRepeats), cp.Uncheckpointed)
 	c := r.add("completeness", title, Verified, detail)
 	if len(cp.IncompleteBatch)+len(cp.DuplicateBatch)+len(cp.SequenceGaps)+len(cp.SequenceRepeats)+cp.Rejected+len(cp.LogNotices) > 0 {

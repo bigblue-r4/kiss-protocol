@@ -1,0 +1,84 @@
+# Harborlight Stage 2 pilot: local evaluation demo. Synthetic data only.
+#
+#   docker compose -f pilot/compose.yaml up -d --build      start the stack
+#   docker compose -f pilot/compose.yaml run --rm synth     send synthetic Logpush uploads
+#   docker compose -f pilot/compose.yaml run --rm verify    verify, writes pilot/out/report.html
+#   docker compose -f pilot/compose.yaml run --rm adversarial
+#   docker compose -f pilot/compose.yaml down -v            remove everything, keys included
+#
+# Ports are bound to 127.0.0.1 only. See pilot/README.md.
+name: harborlight-pilot
+
+x-image: &image
+  image: harborlight-pilot:local
+  build:
+    context: ..
+    dockerfile: pilot/Dockerfile
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+
+services:
+  init:
+    <<: *image
+    command: ["harborlight-log", "demo-init", "--dir", "/keys",
+              "--log-origin", "pilot.example/demo-log", "--witness-name", "pilot.example/demo-witness"]
+    volumes: ["keys:/keys"]
+
+  witness:
+    <<: *image
+    command: ["omniwitness", "--listen=:8100", "--metrics_listen=", "--db_file=/witness/witness.db",
+              "--private_key_path=/keys/witness.sec", "--additional_logs=/keys/witness-logs.yaml"]
+    volumes: ["keys:/keys:ro", "witness:/witness"]
+    depends_on: {init: {condition: service_completed_successfully}}
+    restart: unless-stopped
+
+  log:
+    <<: *image
+    command: ["harborlight-log", "run", "--key", "/keys/log.key", "--data", "/data", "--public", "/public",
+              "--feed", "/feed/feed.jsonl", "--witness", "@/keys/witness.pub,http://witness:8100,operator",
+              "--interval", "10s", "--listen", ":8080"]
+    volumes: ["keys:/keys:ro", "logdata:/data", "public:/public", "feed:/feed:ro"]
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on: {init: {condition: service_completed_successfully}, witness: {condition: service_started}}
+    restart: unless-stopped
+
+  adapter:
+    <<: *image
+    command: ["harborlight-cf-adapter", "serve", "--listen", ":8443", "--feed", "/feed/feed.jsonl",
+              "--token-file", "/keys/adapter.token"]
+    volumes: ["keys:/keys:ro", "feed:/feed"]
+    ports: ["127.0.0.1:8443:8443"]
+    depends_on: {init: {condition: service_completed_successfully}}
+    restart: unless-stopped
+
+  synth:
+    <<: *image
+    profiles: ["tools"]
+    command: ["harborlight-cf-adapter", "synth", "--url", "http://adapter:8443/?dataset=ai_gateway_events",
+              "--token-file", "/keys/adapter.token", "--events", "2000", "--batch", "250", "--redeliver-batch", "2"]
+    volumes: ["keys:/keys:ro"]
+
+  verify:
+    <<: *image
+    profiles: ["tools"]
+    # Demo shortcut: the public keys come from the demo's key volume. In a
+    # real evaluation the evaluator gets them from the operator out of band.
+    command: ["harborlight-verify", "--source", "http://log:8080", "--log-key", "@/keys/log.key.pub",
+              "--operator-witness-key", "@/keys/witness.pub", "--max-age", "5m",
+              "--state", "/out/evaluator-state.json", "--report", "/out/report.html", "--json", "/out/report.json"]
+    volumes: ["keys:/keys:ro", "./out:/out"]
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+
+  adversarial:
+    <<: *image
+    profiles: ["tools"]
+    command: ["harborlight-adversarial", "--keep", "/tmp/adv"]
+    tmpfs: ["/tmp"]
+
+volumes:
+  keys:
+  witness:
+  logdata:
+  public:
+  feed:

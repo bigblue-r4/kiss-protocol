@@ -27,6 +27,7 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 const usageText = `usage: harborlight-verify --source DIR|URL --log-key VKEY|@FILE
                           --witness-key VKEY|@FILE [--witness-key ...]
+                          [--operator-witness-key VKEY|@FILE]...
                           [--quorum N] [--max-age 10m] [--state FILE]
                           [--operator-witness NAME]... [--report FILE.html] [--json FILE]
 
@@ -45,13 +46,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	state := fs.String("state", "", "file holding the last checkpoint you verified (rollback and rewrite detection)")
 	report := fs.String("report", "", "write an HTML report here")
 	jsonOut := fs.String("json", "", "write the JSON result here")
-	var wkeys, opRun multi
+	var wkeys, opKeys, opRun multi
 	fs.Var(&wkeys, "witness-key", "pinned witness verifier key, or @file (repeatable)")
+	fs.Var(&opKeys, "operator-witness-key", "like --witness-key, for a witness run by the log operator (disclosed as not independent)")
 	fs.Var(&opRun, "operator-witness", "name of a witness run by the log operator (disclosed; repeatable)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if *source == "" || *logKey == "" || len(wkeys) == 0 || *quorum < 1 || *maxAge <= 0 {
+	if *source == "" || *logKey == "" || len(wkeys)+len(opKeys) == 0 || *quorum < 1 || *maxAge <= 0 {
 		fmt.Fprint(stderr, usageText)
 		fmt.Fprintln(stderr, "\n--source, --log-key and at least one --witness-key are required; --quorum must be at least 1.")
 		return 2
@@ -62,7 +64,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	o := verify.Options{Source: *source, LogKey: lk[0], Quorum: *quorum, MaxAge: *maxAge, StatePath: *state, OperatorControlled: map[string]bool{}}
-	for _, w := range wkeys {
+	for i, w := range append(append([]string(nil), wkeys...), opKeys...) {
 		ks, err := readKeys(w)
 		if err != nil {
 			fmt.Fprintln(stderr, "--witness-key:", err)
@@ -75,6 +77,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 				return 2
 			}
 			o.WitnessKeys = append(o.WitnessKeys, ck)
+			if i >= len(wkeys) {
+				opRun = append(opRun, ck.Name)
+			}
 		}
 	}
 	if *quorum > len(o.WitnessKeys) {

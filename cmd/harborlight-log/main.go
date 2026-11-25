@@ -39,9 +39,11 @@ func usage(w io.Writer) {
       Write a new log signing key to FILE (mode 0600) and its public
       verifier key to FILE.pub. NAME is the log origin, e.g. pilot.example/log.
   harborlight-log run --key FILE --data DIR --public DIR [--feed FILE]
-                      [--witness 'VKEY,URL']... [--operator-witness NAME]...
+                      [--witness 'VKEY|@FILE,URL[,operator]']... [--operator-witness NAME]...
                       [--interval 30s] [--listen ADDR] [--once]
       Ingest FILE, checkpoint every interval, serve DIR on ADDR.
+  harborlight-log demo-init --dir DIR [--log-origin O] [--witness-name N]
+      Create the demo's keys once (software keys, demo only).
 `)
 }
 
@@ -55,6 +57,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return keygen(args[1:], stdout, stderr)
 	case "run":
 		return serve(args[1:], stderr)
+	case "demo-init":
+		return demoInit(args[1:], stdout, stderr)
 	default:
 		usage(stderr)
 		return 2
@@ -101,17 +105,25 @@ func keygen(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// ParseWitness parses "VKEY,URL".
+// parseWitness parses "VKEY,URL[,operator]"; VKEY may be @FILE.
 func parseWitness(s string) (evlog.Witness, error) {
-	vkey, url, ok := strings.Cut(s, ",")
-	if !ok || url == "" {
-		return evlog.Witness{}, errors.New("--witness wants 'VKEY,URL'")
+	parts := strings.Split(s, ",")
+	if len(parts) < 2 || len(parts) > 3 || parts[1] == "" || (len(parts) == 3 && parts[2] != "operator") {
+		return evlog.Witness{}, errors.New("--witness wants 'VKEY,URL' or 'VKEY,URL,operator' (VKEY may be @FILE)")
+	}
+	vkey := parts[0]
+	if f, ok := strings.CutPrefix(vkey, "@"); ok {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			return evlog.Witness{}, err
+		}
+		vkey = strings.TrimSpace(string(b))
 	}
 	k, err := checkpoint.ParseCosignerKey(vkey)
 	if err != nil {
 		return evlog.Witness{}, err
 	}
-	return evlog.Witness{URL: url, Key: k}, nil
+	return evlog.Witness{URL: parts[1], Key: k, OperatorControlled: len(parts) == 3}, nil
 }
 
 func serve(args []string, stderr io.Writer) int {
@@ -125,7 +137,7 @@ func serve(args []string, stderr io.Writer) int {
 	listen := fs.String("listen", "", "serve the public directory on this address")
 	once := fs.Bool("once", false, "ingest and checkpoint once, then exit")
 	var witnesses, operatorRun multi
-	fs.Var(&witnesses, "witness", "'VKEY,URL' of a tlog-witness (repeatable)")
+	fs.Var(&witnesses, "witness", "'VKEY,URL[,operator]' of a tlog-witness; VKEY may be @FILE; ',operator' marks one this operator runs (repeatable)")
 	fs.Var(&operatorRun, "operator-witness", "name of a witness run by this operator (disclosed; repeatable)")
 	if fs.Parse(args) != nil || *keyPath == "" || *data == "" || *public == "" {
 		usage(stderr)
@@ -158,7 +170,7 @@ func serve(args []string, stderr io.Writer) int {
 			lg.Print(err)
 			return 2
 		}
-		w.OperatorControlled = opRun[w.Key.Name]
+		w.OperatorControlled = w.OperatorControlled || opRun[w.Key.Name]
 		cfg.Witnesses = append(cfg.Witnesses, w)
 	}
 	l, err := evlog.Open(cfg)
