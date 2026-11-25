@@ -4,6 +4,13 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Merkle consistency proofs** (RFC 6962 §2.1.2, verified per RFC 9162 §2.1.4.2): `witness prove-consistency` (from the local log, or from a copy of the leaf feed with no keys) and `witness verify-consistency`, which checks off-host, with two signed heads, the proof and the signer's public key, that the newer head extends the older one. A rewritten or rolled-back history fails, even if it was re-signed with the witness key. Cross-checked against `transparency-dev/merkle` for every tree size up to 130 (as a test oracle only; not a dependency). Two new fuzz targets. See `docs/mirror-setup.md`. No log or head format change.
+
+---
+
 ## [3.4.0] — 2026-11-24
 
 Highlights: a hash-pinned way to approve known drift (`witness accept`); drift that reports new files and new executables, not just changed ones; a log that survives a power cut and can be checked read-only while the daemon runs; an off-host leaf-hash feed and pinned audits that catch rewritten history; the first `gate` (source only); and release binaries that ship with a signed SBOM and GitHub build provenance. Built with Go 1.26.11, which clears 37 standard-library vulnerabilities the code reached on Go 1.25.
