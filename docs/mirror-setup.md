@@ -143,6 +143,32 @@ held copy is the point. If the log is re-initialised, the daemon rewrites the
 feed and records `mirror_leaf_feed_reset`; the puller must start a new epoch
 deliberately.
 
+### Consistency proofs: continuity without holding the leaves
+
+A verifier that kept only an earlier **signed head** (not the leaf feed) can
+still check that a later head extends it, with an RFC 6962 consistency proof
+(verified as in RFC 9162 §2.1.4.2). The proof is a few hashes, about
+2·log2(size), and needs no record content and no keys to produce:
+
+```bash
+# On the host (reads the local log, checks the stored head against your pin):
+witness prove-consistency --old-size 1200 --pubkey HEX > proof.json
+# Or anywhere, from a copy of the leaf feed:
+witness prove-consistency --old-size 1200 --leaves leaves.bin [--new-size N] > proof.json
+
+# Off-host, with only public material:
+witness verify-consistency --old head-1200.json --new tree-head.json \
+    --proof proof.json --pubkey HEX          # 0 ok, 1 inconsistent or bad signature, 2 usage/IO
+```
+
+Both heads must be signed by a pinned key. A rewritten or truncated history,
+even one re-signed with the witness's own key, cannot produce a proof that
+verifies against the head you kept, and showing an older head as current
+fails too (rollback). What this does **not** do: it can't help a verifier that
+has never seen an earlier head, and it doesn't stop the operator showing
+different heads to different verifiers. That needs heads co-signed or
+anchored outside the operator's control.
+
 ---
 
 ## Auditing

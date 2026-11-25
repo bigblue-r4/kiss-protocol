@@ -87,6 +87,10 @@ func main() {
 		cmdVerifyExport()
 	case "verify-leaves":
 		os.Exit(cmdVerifyLeaves(os.Args[2:], os.Stdout, os.Stderr))
+	case "prove-consistency":
+		os.Exit(cmdProveConsistency(os.Args[2:], os.Stdout, os.Stderr))
+	case "verify-consistency":
+		os.Exit(cmdVerifyConsistency(os.Args[2:], os.Stdout, os.Stderr))
 	case "migrate":
 		cmdMigrate()
 	case "soul":
@@ -122,6 +126,10 @@ Usage:
                                   Check an export offline, with only the public key
   witness verify-leaves --leaves FILE --size N --root HEX
                                   Check a mirror leaf feed against a signed head (off-host)
+  witness prove-consistency --old-size N [--leaves FILE [--new-size N]]
+                                  Prove the log of size N is a prefix of the current one
+  witness verify-consistency --old HEADFILE --new HEADFILE --proof FILE --pubkey HEX
+                                  Check off-host that a newer signed head extends an older one
   witness migrate [src-dir]       Import v1 log into v2 Merkle log (one-shot)
   witness soul sign [--dev]       Sign the soul file with the configured signer
   witness soul verify             Verify soul file signature against allowlist
@@ -130,7 +138,7 @@ Usage:
   witness audit [--max-lag N] [--pubkey HEX] Compare local Merkle log to transparency mirror
   witness version                 Print version
 
-Verifier flags (verify, prove, audit, export, verify-export):
+Verifier flags (verify, prove, prove-consistency, verify-consistency, audit, export, verify-export):
   --pubkey HEX       Trusted Ed25519 public key (repeatable)
   --pubkey-file PATH Soul-format signer allowlist (repeatable)
 
