@@ -15,7 +15,9 @@ APORT=18543 WPORT=18101
 T=/usr/bin/time
 [[ -x $T ]] || { echo "needs GNU time at /usr/bin/time" >&2; exit 1; }
 
-PIDS=(); trap 'for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null || true; done' EXIT
+PIDS=()
+cleanup() { for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null || true; done; }
+trap cleanup EXIT
 "$BIN/omniwitness" --listen="127.0.0.1:$WPORT" --metrics_listen= --db_file="$B/w.db" \
   --private_key_path="$K/witness.sec" --additional_logs="$K/witness-logs.yaml" >"$B/witness.log" 2>&1 & PIDS+=($!)
 
@@ -32,7 +34,7 @@ PY
 }
 
 # 1. Adapter: receive gzip NDJSON uploads and fsync each batch to the feed.
-"$BIN/harborlight-cf-adapter" serve --listen "127.0.0.1:$APORT" --feed "$B/feed.jsonl" --token-file "$K/adapter.token" >"$B/adapter.log" 2>&1 & APID=$!; PIDS+=($APID)
+"$BIN/harborlight-cf-adapter" serve --listen "127.0.0.1:$APORT" --feed "$B/feed.jsonl" --token-file "$K/adapter.token" >"$B/adapter.log" 2>&1 & APID=$!; PIDS+=("$APID")
 sleep 0.5
 S0=$(awk '{print $14+$15}' "/proc/$APID/stat")
 measure "generator+upload" "$BIN/harborlight-cf-adapter" synth --url "http://127.0.0.1:$APORT/" --token-file "$K/adapter.token" --events "$EVENTS" --batch 1000
