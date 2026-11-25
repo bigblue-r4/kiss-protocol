@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harborlight pilot verification: VERIFIED</title>
+<style>
+:root{--ok:#1a7f37;--bad:#cf222e;--warn:#9a6700;--fg:#1f2328;--mut:#59636e;--line:#d1d9e0;--bg:#fff;--soft:#f6f8fa}
+@media (prefers-color-scheme:dark){:root{--ok:#3fb950;--bad:#f85149;--warn:#d29922;--fg:#e6edf3;--mut:#9198a1;--line:#3d444d;--bg:#0d1117;--soft:#151b23}}
+body{font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--fg);background:var(--bg);max-width:980px;margin:2rem auto;padding:0 1rem}
+h1{font-size:1.4rem;margin:.2rem 0}h2{font-size:1.1rem;margin-top:2rem;border-bottom:1px solid var(--line);padding-bottom:.3rem}
+.verdict{border:2px solid;border-radius:8px;padding:1rem 1.2rem;margin:1rem 0}
+.verdict.ok{border-color:var(--ok)}.verdict.bad{border-color:var(--bad)}.verdict.warn{border-color:var(--warn)}
+.big{font-size:1.6rem;font-weight:700}.ok .big,.st.ok{color:var(--ok)}.bad .big,.st.bad{color:var(--bad)}.warn .big,.st.warn{color:var(--warn)}
+table{border-collapse:collapse;width:100%;font-size:.92rem}th,td{text-align:left;vertical-align:top;padding:.4rem .5rem;border-bottom:1px solid var(--line)}
+th{color:var(--mut);font-weight:600}.st{font-weight:700;white-space:nowrap}.mut{color:var(--mut)}
+.note{background:var(--soft);border-left:3px solid var(--warn);padding:.4rem .7rem;margin-top:.3rem}
+code,pre{font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;white-space:pre-wrap}
+pre{background:var(--soft);padding:.7rem;border-radius:6px}
+ul{padding-left:1.2rem}
+</style></head><body>
+<p class="mut">Harborlight pilot evidence verification report</p>
+<h1>pilot.example/demo-log</h1>
+<div class="verdict ok"><div class="big">VERIFIED</div><div>2251 records of pilot.example/demo-log verified against a pinned log key and witness quorum (witness NOT independent)</div></div>
+<p class="mut">VERIFIED: every check passed. FAILED: the evidence is provably wrong. UNVERIFIABLE: the verifier could not establish the result (an input was missing, a witness was stale or absent); it is never a pass.</p>
+
+<h2>Checks</h2>
+<table><tr><th>Result</th><th>Check</th><th>Detail</th></tr>
+<tr><td class="st ok">VERIFIED</td><td>Checkpoint signed by the pinned log key</td><td>pilot.example/demo-log, size 2251</td></tr>
+<tr><td class="st ok">VERIFIED</td><td>Witness quorum (1 of 1 pinned witnesses, fresh within 5m0s)</td><td>1 fresh valid cosignature(s); newest 2026-11-25T22:12:23Z<div class="note">The quorum is met only with witnesses marked as run by the log operator. This demonstrates the protocol; it gives no independence, and the operator could show different histories to different verifiers.</div></td></tr>
+<tr><td class="st ok">VERIFIED</td><td>Records reproduce the checkpoint root</td><td>2251 records hash to the signed root</td></tr>
+<tr><td class="st ok">VERIFIED</td><td>Consistent with this evaluator&#39;s previous verification</td><td>no state file yet: this run creates it<div class="note">First run: no earlier checkpoint to compare with.</div></td></tr>
+<tr><td class="st ok">VERIFIED</td><td>Completeness indicators (disclosed, not proven)</td><td>2251 events, 0 rejected lines, 9 batches; 0 incomplete batches, 1 duplicate-delivery findings, 0 sequence gaps, 0 repeats; 0 records after the checkpoint not yet covered<div class="note">The log is intact, but its input shows gaps, repeats, rejected lines or log notices. See the completeness section.</div></td></tr>
+</table>
+
+<h2>Checkpoint</h2>
+<table><tr><th>Origin</th><td><code>pilot.example/demo-log</code></td></tr><tr><th>Size</th><td>2251</td></tr><tr><th>Root (hex)</th><td><code>1482e4bdae93de98d1ccffe14d5eef43b17bd8c797dcd30f184f90524b25982b</code></td></tr></table>
+
+<h2>Witnesses</h2>
+<table><tr><th>Witness</th><th>Operator-run</th><th>Cosignature</th><th>Timestamp (signed by the witness)</th><th>Note</th></tr>
+<tr><td><code>pilot.example/demo-witness</code></td><td>yes: no independence</td><td>valid, fresh</td><td>2026-11-25T22:12:23Z</td><td></td></tr>
+</table>
+
+<h2>Completeness (disclosed, not proven)</h2>
+<table>
+<tr><th>Events</th><td>2251</td></tr>
+<tr><th>Events by source</th><td><code>cf-logpush</code>: 2251<br></td></tr>
+<tr><th>Rejected input lines</th><td>0 (kept as hashes only)</td></tr>
+<tr><th>Batches</th><td>9</td></tr>
+<tr><th>Incomplete batches</th><td>none</td></tr>
+<tr><th>Duplicate batch entries</th><td>batch a74bd588de0d3518c0da66709506bd9e: all 250 entries recorded 2 times (the whole batch was delivered again)<br></td></tr>
+<tr><th>Source sequence gaps</th><td>none</td></tr>
+<tr><th>Source sequence repeats</th><td>none</td></tr>
+<tr><th>Log notices</th><td>none</td></tr>
+<tr><th>Records after the checkpoint</th><td>0 (not yet covered, not verified)</td></tr>
+</table>
+
+<h2>What this result does not show</h2>
+<ul><li>Completeness: the log proves that what it received is unaltered. It cannot prove that it received everything the source emitted.</li><li>Truth of content: a record proves only that the log received this payload, not that the event it describes happened.</li><li>Operator: the log operator holds the log signing key. Witnesses stop the operator from showing different histories to different verifiers only up to the witness quorum: the operator plus that many colluding witnesses could still do so.</li><li>Time: record times are the log host&#39;s clock. A cosignature timestamp bounds when a checkpoint existed, not when an event happened.</li><li>Keys: the pilot uses software keys on the log host; anyone with root there can sign as the log. Hardware key custody is not part of the pilot.</li><li>Scope: this is a pilot evaluation, not a certification. It makes no Proof-of-Control Tier 3 or Tier 4 claim and no production security guarantee.</li><li>THIS RUN: witness quorum met only by operator-controlled witnesses (no independence).</li></ul>
+
+<h2>Run manifest</h2>
+<table>
+<tr><th>Source</th><td><code>http://127.0.0.1:18080</code></td></tr>
+<tr><th>Verified at</th><td>2026-11-25T22:12:23Z</td></tr>
+<tr><th>Verifier</th><td><code>harborlight-verify v1.0.1-0.20261125221212-ab49642f1006 ab49642f10060abee3734ae56dc410b0b50496f0</code></td></tr>
+<tr><th>Pinned log key</th><td><code>pilot.example/demo-log&#43;7f4f60e4&#43;Ab/pTn4i5F3MEXc6uakdLLkNNrLe3/IF&#43;c1JOofvck0B</code></td></tr>
+<tr><th>Pinned witness keys</th><td><code>pilot.example/demo-witness&#43;f4f44d8d&#43;BFgou4sJbgOOXKIyPl90RGDSWDTF&#43;k6W2DDqF/lDUY8H</code><br></td></tr>
+<tr><th>Quorum / freshness</th><td>1 / 5m0s</td></tr>
+<tr><th>Prior state</th><td><code><workdir>/evaluator-state.json</code></td></tr>
+<tr><th>Input SHA-256</th><td><code>checkpoint</code> <code>b8e0e0c6bffe28e168b48dbe40fbee7676a654c909eb451e7031495988063dff</code><br><code>records.jsonl</code> <code>83c91708027051e9e3221dcc14ee4a675f0d8ba6d65ad02520070150603d3db7</code><br></td></tr>
+</table>
+<p>Signed checkpoint as verified:</p><pre>pilot.example/demo-log
+2251
+FILkva6T3pjRzP/hTV7vQ7F72MeX3NMPGE&#43;QUkslmCs=
+
+— pilot.example/demo-log f09g5GtLWxuGARYeezil1HX56MGzlNjdLSzszspTkUPhsma1wmw&#43;S8iz7ygZzoTEhOJ8OA/lPIV/gLoEtT3ahp886wU=
+— pilot.example/demo-witness 9PRNjQAAAABrB11HK2f2F0F1GELMP0QaphExFv/SAGvqgiJHy2g2xEcH8ZE42lg2YW1/3a2WG8nh9KuM/mEgDCWN5z6MeJ9M4zBiCA==
+</pre>
+<p class="mut">Reproduce: run <code>harborlight-verify</code> with the same source and the same pinned keys. This report is generated output; the evidence is the signed checkpoint and the records, not this page.</p>
+</body></html>

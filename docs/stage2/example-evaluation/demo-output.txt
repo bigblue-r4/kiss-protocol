@@ -1,0 +1,21 @@
+== 1. Independent verification over HTTP, with public keys only
+VERIFIED: 2251 records of pilot.example/demo-log verified against a pinned log key and witness quorum (witness NOT independent)
+  VERIFIED     Checkpoint signed by the pinned log key: pilot.example/demo-log, size 2251
+  VERIFIED     Witness quorum (1 of 1 pinned witnesses, fresh within 5m0s): 1 fresh valid cosignature(s); newest 2026-11-25T22:12:23Z
+                 note: The quorum is met only with witnesses marked as run by the log operator. This demonstrates the protocol; it gives no independence, and the operator could show different histories to different verifiers.
+  VERIFIED     Records reproduce the checkpoint root: 2251 records hash to the signed root
+  VERIFIED     Consistent with this evaluator's previous verification: no state file yet: this run creates it
+                 note: First run: no earlier checkpoint to compare with.
+  VERIFIED     Completeness indicators (disclosed, not proven): 2251 events, 0 rejected lines, 9 batches; 0 incomplete batches, 1 duplicate-delivery findings, 0 sequence gaps, 0 repeats; 0 records after the checkpoint not yet covered
+                 note: The log is intact, but its input shows gaps, repeats, rejected lines or log notices. See the completeness section.
+
+== 2. Tampered copy: one record changed after the fact
+FAILED: Records reproduce the checkpoint root: the records do not hash to the signed root: a record was modified, inserted, removed or reordered
+
+== 3. Witness stopped: the log keeps running, the verifier will not say VERIFIED once the cosignature is stale
+UNVERIFIABLE: Witness quorum (1 of 1 pinned witnesses, fresh within 3s): 0 fresh valid cosignature(s): witness unavailable, or a checkpoint the witnesses never saw (a possible split view)
+
+== 4. Adversarial regression suite
+21 of 21 cases matched the expected result.
+
+== Done. Open <workdir>/report.html

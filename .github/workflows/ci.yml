@@ -56,6 +56,36 @@ jobs:
           go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
           golangci-lint run ./...
 
+  pilot:
+    # Stage 2 pilot: our tlog-witness client against an unmodified, pinned
+    # transparency-dev/witness omniwitness, then the whole demo end to end.
+    name: pilot (omniwitness interop + demo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - name: Install pinned omniwitness
+        run: |
+          cd "$RUNNER_TEMP"
+          GOBIN="$RUNNER_TEMP/bin" go install \
+            github.com/transparency-dev/witness/cmd/omniwitness@v0.0.0-20261125093440-4aa9dadc1f0b \
+            github.com/transparency-dev/witness/cmd/generate_keys@v0.0.0-20261125093440-4aa9dadc1f0b
+      - name: Interop test
+        run: HL_OMNIWITNESS="$RUNNER_TEMP/bin/omniwitness" HL_GENERATE_KEYS="$RUNNER_TEMP/bin/generate_keys" go test -run Interop -v ./pkg/checkpoint
+      - name: Demo end to end
+        run: |
+          shellcheck pilot/demo.sh pilot/bench.sh
+          mkdir -p "$RUNNER_TEMP/demo/bin" && cp "$RUNNER_TEMP/bin/"* "$RUNNER_TEMP/demo/bin/"
+          pilot/demo.sh "$RUNNER_TEMP/demo" | tee "$RUNNER_TEMP/demo.out"
+          grep -q '^VERIFIED: ' "$RUNNER_TEMP/demo.out"
+          grep -q '^FAILED: Records reproduce' "$RUNNER_TEMP/demo.out"
+          grep -q '^UNVERIFIABLE: Witness quorum' "$RUNNER_TEMP/demo.out"
+          grep -q '21 of 21 cases matched' "$RUNNER_TEMP/demo.out"
+
   reproducible-build:
     name: reproducible build
     runs-on: ubuntu-latest
@@ -88,6 +118,8 @@ jobs:
           - { pkg: ./internal/mirror/, target: FuzzPushJSON }
           - { pkg: ./internal/merkle/, target: FuzzVerifyAdversarial }
           - { pkg: ./internal/merkle/, target: FuzzVerifyConsistencyAdversarial }
+          - { pkg: ./pkg/tlog/, target: FuzzVerifyConsistency }
+          - { pkg: ./pkg/checkpoint/, target: FuzzOpen }
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -140,6 +172,8 @@ jobs:
           - { pkg: ./internal/merkle/, target: FuzzRoot }
           - { pkg: ./internal/merkle/, target: FuzzConsistency }
           - { pkg: ./internal/merkle/, target: FuzzVerifyConsistencyAdversarial }
+          - { pkg: ./pkg/tlog/, target: FuzzVerifyConsistency }
+          - { pkg: ./pkg/checkpoint/, target: FuzzOpen }
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:

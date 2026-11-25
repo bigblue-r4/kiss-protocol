@@ -1,0 +1,170 @@
+[
+  {
+    "id": "A01-baseline",
+    "attack": "none: honest log, fresh witness cosignature",
+    "expected": "VERIFIED",
+    "got": "VERIFIED",
+    "pass": true,
+    "verifier_summary": "20 records of pilot.example/adversarial-log verified against a pinned log key and witness quorum"
+  },
+  {
+    "id": "A02-modify",
+    "attack": "change one field of one record",
+    "expected": "FAILED",
+    "got": "FAILED",
+    "pass": true,
+    "verifier_summary": "Records reproduce the checkpoint root: the records do not hash to the signed root: a record was modified, inserted, removed or reordered"
+  },
+  {
+    "id": "A03-insert",
+    "attack": "insert a fabricated record",
+    "expected": "FAILED",
+    "got": "FAILED",
+    "pass": true,
+    "verifier_summary": "Records reproduce the checkpoint root: the records do not hash to the signed root: a record was modified, inserted, removed or reordered (line 7 carries seq 5, which already appeared: a replayed record)"
+  },
+  {
+    "id": "A04-delete",
+    "attack": "delete one record from the middle",
+    "expected": "FAILED",
+    "got": "FAILED",
+    "pass": true,
+    "verifier_summary": "Every checkpointed record present: the checkpoint commits to 20 records; the source has 19: evidence deleted or truncated"
+  },
+  {
+    "id": "A05-reorder",
+    "attack": "swap two records",
+    "expected": "FAILED",
+    "got": "FAILED",
+    "pass": true,
+    "verifier_summary": "Records reproduce the checkpoint root: the records do not hash to the signed root: a record was modified, inserted, removed or reordered (line 3 carries seq 3: records missing or out of order from here)"
+  },
+  {
+    "id": "A06-replay",
+    "attack": "replay (duplicate) a record in place of another",
+    "expected": "FAILED",
+    "got": "FAILED",
+    "pass": true,
+    "verifier_summary": "Records reproduce the checkpoint root: the records do not hash to the signed root: a record was modified, inserted, removed or reordered (line 7 carries seq 5, which already appeared: a replayed record)"
+  },
+  {
+    "id": "A07-truncate",
+    "attack": "drop the newest checkpointed records",
+    "expected": "FAILED",
+    "got": "FAILED",
+    "pass": true,
+    "verifier_summary": "Every checkpointed record present: the checkpoint commits to 20 records; the source has 17: evidence deleted or truncated"
+  },
+  {
+    "id": "A08-rewrite-resign-first-look",
+    "attack": "operator rewrites a record and re-signs with the real log key; evaluator has no earlier state",
+    "expected": "UNVERIFIABLE",
+    "got": "UNVERIFIABLE",
+    "pass": true,
+    "verifier_summary": "Witness quorum (1 of 1 pinned witnesses, fresh within 10m0s): 0 fresh valid cosignature(s): witness unavailable, or a checkpoint the witnesses never saw (a possible split view)"
+  },
+  {
+    "id": "A09-rewrite-resign-known",
+    "attack": "the same rewrite, shown to an evaluator who verified the honest log before",
+    "expected": "FAILED",
+    "got": "FAILED",
+    "pass": true,
+    "verifier_summary": "Consistent with this evaluator's previous verification: history rewritten: the first 20 records no longer match the root verified on 2026-11-25T22:12:27Z"
+  },
+  {
+    "id": "A10-split-view",
+    "attack": "two histories: evaluator A gets the honest one, evaluator B a fork signed by the log key; the witness refuses the fork",
+    "expected": "UNVERIFIABLE",
+    "got": "UNVERIFIABLE",
+    "pass": true,
+    "verifier_summary": "Witness quorum (1 of 1 pinned witnesses, fresh within 10m0s): 0 fresh valid cosignature(s): witness unavailable, or a checkpoint the witnesses never saw (a possible split view)"
+  },
+  {
+    "id": "A11-rollback",
+    "attack": "serve an older, genuinely cosigned checkpoint and its records to an evaluator who saw a newer one",
+    "expected": "FAILED",
+    "got": "FAILED",
+    "pass": true,
+    "verifier_summary": "Consistent with this evaluator's previous verification: rollback: this evaluator verified size 25 on 2026-11-25T22:12:27Z; the log now shows 20"
+  },
+  {
+    "id": "A12-stale-witness",
+    "attack": "the newest cosignature is older than the evaluator's freshness bound (withheld or frozen checkpoint)",
+    "expected": "UNVERIFIABLE",
+    "got": "UNVERIFIABLE",
+    "pass": true,
+    "verifier_summary": "Witness quorum (1 of 1 pinned witnesses, fresh within 10m0s): only 0 fresh valid cosignature(s), 1 stale or future-dated: the checkpoint may be outdated or withheld"
+  },
+  {
+    "id": "A13-witness-down",
+    "attack": "the witness is unreachable when the log checkpoints",
+    "expected": "UNVERIFIABLE",
+    "got": "UNVERIFIABLE",
+    "pass": true,
+    "verifier_summary": "Witness quorum (1 of 1 pinned witnesses, fresh within 10m0s): 0 fresh valid cosignature(s): witness unavailable, or a checkpoint the witnesses never saw (a possible split view)"
+  },
+  {
+    "id": "A14-forged-cosignature",
+    "attack": "corrupt the witness cosignature bytes",
+    "expected": "FAILED",
+    "got": "FAILED",
+    "pass": true,
+    "verifier_summary": "Cosignature from pilot.example/adversarial-witness: a signature line carries this witness's key ID but does not verify: forged or corrupted (cosignature does not verify)"
+  },
+  {
+    "id": "A15-wrong-log-key",
+    "attack": "a checkpoint signed by a key other than the pinned log key",
+    "expected": "FAILED",
+    "got": "FAILED",
+    "pass": true,
+    "verifier_summary": "Checkpoint signed by the pinned log key: checkpoint: no signature by the pinned log key"
+  },
+  {
+    "id": "A16-impostor-witness",
+    "attack": "a cosignature from a key that is not the pinned witness key",
+    "expected": "UNVERIFIABLE",
+    "got": "UNVERIFIABLE",
+    "pass": true,
+    "verifier_summary": "Witness quorum (1 of 1 pinned witnesses, fresh within 10m0s): 0 fresh valid cosignature(s): witness unavailable, or a checkpoint the witnesses never saw (a possible split view)"
+  },
+  {
+    "id": "A17-torn-write",
+    "attack": "power cut mid-write: a partial record at the end of the log; the log restarts",
+    "expected": "VERIFIED",
+    "got": "VERIFIED",
+    "pass": true,
+    "verifier_summary": "21 records of pilot.example/adversarial-log verified against a pinned log key and witness quorum"
+  },
+  {
+    "id": "A18-evidence-deleted-at-host",
+    "attack": "records under a signed checkpoint deleted on the log host; the log restarts",
+    "expected": "FAILED",
+    "got": "FAILED",
+    "pass": true,
+    "verifier_summary": "Every checkpointed record present: the checkpoint commits to 20 records; the source has 18: evidence deleted or truncated"
+  },
+  {
+    "id": "A19-flood",
+    "attack": "garbage and oversized input lines on the feed",
+    "expected": "VERIFIED",
+    "got": "VERIFIED",
+    "pass": true,
+    "verifier_summary": "522 records of pilot.example/adversarial-log verified against a pinned log key and witness quorum"
+  },
+  {
+    "id": "A20-source-unreachable",
+    "attack": "the public directory cannot be fetched",
+    "expected": "UNVERIFIABLE",
+    "got": "UNVERIFIABLE",
+    "pass": true,
+    "verifier_summary": "Checkpoint available: open <tmp>/A20-source-unreachable/does-not-exist/checkpoint: no such file or directory"
+  },
+  {
+    "id": "A21-records-withheld",
+    "attack": "checkpoint served, records file withheld",
+    "expected": "UNVERIFIABLE",
+    "got": "UNVERIFIABLE",
+    "pass": true,
+    "verifier_summary": "Records available: open <tmp>/A21-records-withheld/attacked-copy/records.jsonl: no such file or directory"
+  }
+]

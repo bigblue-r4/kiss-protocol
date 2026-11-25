@@ -12,12 +12,77 @@ Labels used below:
 The mission says: *"Do not begin implementation until the Phase 1 conformance assessment has been completed and reviewed by SGAIL leadership."*
 
 - **Phase 1 is complete:** branch `poc/phase1-gap-matrix`, commit `9081ac2`.
-- **Leadership review:** on 2026-11-25 Chris (founder) answered the §9 decisions with "Proceed with one through four as you see fit". This is recorded as authorization to implement, given by leadership. It is **not** a record of a separate written review of Phase 1; if one is wanted for the file, it is still to be written.
+- **Leadership review:** on 2026-11-25 SGAIL leadership (the founder) answered the §9 decisions with "Proceed with one through four as you see fit". This is recorded as authorization to implement, given by leadership. It is **not** a record of a separate written review of Phase 1; if one is wanted for the file, it is still to be written.
 - **Already open, and carried over from the Proof-of-Control (PoC) plan:**
   - PR #77, consistency proofs;
   - PR #78, the clean-room evidence verifier.
 
   Both are reviewed code that the pilot reuses; neither is new Stage 2 work.
+
+## Implementation status (2026-11-25)
+
+Branch `stage2/pilot`. Everything below was run on the development workstation unless it says otherwise.
+
+### Mission requirements → where they are met
+
+| Requirement | State | Where |
+|---|---|---|
+| Consistency proofs | **Done** | `pkg/tlog` (SHA-256; cross-checked against `x/mod/sumdb/tlog` for every size up to 80); PR #77 for the BLAKE3 Witness log (merged) |
+| Pinned keys | **Done** | The verifier requires `--log-key` and witness keys; there is no trust-on-first-use, and `log.json` is ignored |
+| Independently retained checkpoints | **Mechanism done; independence pending approval** | A tlog-witness client; interop with unmodified omniwitness. The demo witness runs on the operator's host and every report says so |
+| Verified crash recovery | **Done for the pilot log** | A torn write is quarantined and recorded (A17); the log refuses to start over altered or lost evidence (A18, unit tests); a replayed record is reported as a replay (A06) |
+| Standalone verifier, no private keys | **Done** | `harborlight-verify`: public directory plus public keys |
+| Lightweight independent witness service | **INTEGRATE: done** | `transparency-dev/witness` omniwitness, pinned and unmodified |
+| Cloudflare-compatible adapter, public interfaces, synthetic data | **Done** | `harborlight-cf-adapter`, built from the public Logpush docs only; `synth` uses documented field names with invented values |
+| Docker Compose | **Written, not run** | `pilot/compose.yaml`, `pilot/Dockerfile`. No Docker on the development workstation. `pilot/demo.sh` runs the same topology and is tested |
+| Shadow mode | **Done, by construction** | The adapter is a sink with no Cloudflare credential and no outbound request |
+| Completeness limits and trust boundaries disclosed | **Done** | In every report (disclosures, completeness section, witness independence); `THREAT-MODEL.md` |
+| Adversarial regression tests | **Done** | 21 cases (`harborlight-adversarial`, also `go test`), plus adapter and interop tests |
+| Lucid kept inside the research harness | **Done** | No pilot component references it |
+| Exportable verification report | **Done** | `--report` (single-file HTML, no scripts) and `--json` |
+| Costs, resources, maintenance | **Done (measured)** | `BENCHMARKS-AND-COST.md`. Prices are deliberately left as variables |
+| PoC compatibility | **Partial** | SHA-256 aligned. `pkg/pocverify` (PR #78) is not yet wired into the report |
+| No certification or Tier 3/4 claims | **Held** | Every document and report says so |
+
+### Deliverables
+
+| | State |
+|---|---|
+| D1 verification CLI | done |
+| D2 checkpoints + witness client | done |
+| D3 Cloudflare adapter + generator | done |
+| D4 install package | `demo.sh` tested; Compose written, not run |
+| D5 adversarial suite | done (21/21) |
+| D6 report | done |
+| D7 benchmarks | done (1M events, one machine) |
+| D8 cost per 1M | method plus quantities; prices TO VERIFY |
+| D9 threat model | done |
+| D10 deployment guide | done |
+| D11 example report | done (`example-evaluation/`) |
+| D12 architecture diagram | §4, updated with the shipped names |
+| D13 distributed edge demo | **not started** (needs a second host or an external witness) |
+| D14 readiness roadmap | done |
+
+### Decision log (BUILD / INTEGRATE / OUTSOURCE / DEFER)
+
+| Decision | Class | Why |
+|---|---|---|
+| A separate SHA-256 pilot log, not a change to the Witness log | BUILD | Avoids any risk to existing installs and formats; matches the witness ecosystem and PoC evidence |
+| RFC 6962 tree code | BUILD (ported from `internal/merkle`) | About 200 lines. `x/mod/sumdb/tlog` is the test oracle, not the implementation, because its API needs a stored-hash index |
+| Signed-note log signatures | INTEGRATE (`x/mod/sumdb/note`) | Standard and maintained by the Go team |
+| `cosignature/v1` verification | BUILD | `x/mod` lacks type 0x04. About 60 lines, tested against omniwitness |
+| Witness | INTEGRATE (omniwitness) | Not ours to write. Real independence comes from another operator |
+| Third-party witness operation | OUTSOURCE (needs approval) | |
+| Report UI | BUILD (static HTML) | No server, no JavaScript |
+| ML-DSA-44 cosignatures, Tessera, HSM, RFC 3161, an inline gateway | DEFER | Disclosed |
+| Container base and toolchain | INTEGRATE, digest-pinned | |
+
+### Known gaps to close next
+
+1. Run the Compose path on a Docker host. This needs a host with Docker; the development workstation has none, and installing it needs an administrator.
+2. Add the pilot binaries to `release.yml` (signatures, SBOM, provenance).
+3. Wire `pkg/pocverify` (PR #78) into the report.
+4. D13, and with approval, an independent witness.
 
 ## 1. What the pilot is, and is not
 
@@ -92,13 +157,13 @@ flowchart LR
     SYN["Synthetic generator<br/>(pilot default)"]
   end
   subgraph Operator["Pilot operator host (Docker Compose)"]
-    AD["cf-adapter<br/>HTTPS sink, validates, normalizes"]
+    AD["harborlight-cf-adapter<br/>HTTPS sink, validates, normalizes"]
     FEED[("feed .jsonl")]
-    W["witness<br/>Merkle log + signed checkpoints"]
+    W["harborlight-log<br/>SHA-256 Merkle log + C2SP checkpoints"]
     PUB[("public dir<br/>checkpoints, leaves, plaintext synthetic records")]
   end
   subgraph Independent["Independent party"]
-    WIT["tlog-witness<br/>(transparency-dev/witness)"]
+    WIT["tlog-witness<br/>(omniwitness, transparency-dev/witness)"]
   end
   subgraph Evaluator["External evaluator"]
     V["harborlight-verify<br/>(standalone)"]
@@ -166,7 +231,7 @@ Effort is in engineer-weeks (ew), at about one AI-assisted founder-engineer, wit
 | D11 Example evaluation report | A D6 output from a real run on synthetic data, with the evaluator's reproduction steps | BUILD | 0.25 | D5, D6 |
 | D12 Architecture diagram | §4, maintained in the repo | done (draft) | — | — |
 | D13 Distributed edge demonstration | Two or more hosts (or the Compose demo plus one remote witness); optionally a Workers/R2 mirror | INTEGRATE | 1–2 | D4; external host or witness |
-| D14 Certification-readiness roadmap | The Phase 1 roadmap, re-cut: what the pilot already moves (7.3.5, 7.3.3 partly, 7.2.2 partly) | doc | 0.25 | — |
+| D14 Certification-readiness roadmap | The Phase 1 roadmap, re-cut: what the pilot moves (7.3.3, 7.3.5, 7.2.2, 7.6.6, 8.1.5; see CERTIFICATION-READINESS.md) | doc | 0.25 | — |
 
 **Total: about 12–18 ew** (D13 at its full extent included).
 
@@ -198,7 +263,7 @@ Effort is in engineer-weeks (ew), at about one AI-assisted founder-engineer, wit
 
 ## 9. Decisions (answered 2026-11-25)
 
-Recorded answers, under Chris's "as you see fit":
+Recorded answers, under leadership's "as you see fit":
 
 - **D1:** proceed (see §0).
 - **D2: SHA-256 for new pilot logs.** Implemented as a separate pilot evidence log (`harborlight-log`, packages `pkg/tlog` and `pkg/checkpoint`). The existing Witness keeps its BLAKE3 log and formats unchanged; no existing install is affected.

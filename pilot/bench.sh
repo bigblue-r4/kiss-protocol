@@ -21,7 +21,7 @@ PIDS=(); trap 'for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null || true; done' EX
 
 measure() { # name, command...
   local name=$1; shift
-  $T -f "%e %U %S %M" -o "$B/$name.time" "$@" >"$B/$name.out" 2>&1
+  "$T" -f "%e %U %S %M" -o "$B/$name.time" "$@" >"$B/$name.out" 2>&1
   read -r wall user sys rss < "$B/$name.time"
   python3 - "$name" "$wall" "$user" "$sys" "$rss" "$EVENTS" <<'PY'
 import sys
@@ -34,13 +34,12 @@ PY
 # 1. Adapter: receive gzip NDJSON uploads and fsync each batch to the feed.
 "$BIN/harborlight-cf-adapter" serve --listen "127.0.0.1:$APORT" --feed "$B/feed.jsonl" --token-file "$K/adapter.token" >"$B/adapter.log" 2>&1 & APID=$!; PIDS+=($APID)
 sleep 0.5
-S0=$(awk '{print $14+$15}' /proc/$APID/stat)
+S0=$(awk '{print $14+$15}' "/proc/$APID/stat")
 measure "generator+upload" "$BIN/harborlight-cf-adapter" synth --url "http://127.0.0.1:$APORT/" --token-file "$K/adapter.token" --events "$EVENTS" --batch 1000
-S1=$(awk '{print $14+$15}' /proc/$APID/stat); HZ=$(getconf CLK_TCK)
+S1=$(awk '{print $14+$15}' "/proc/$APID/stat"); HZ=$(getconf CLK_TCK)
 python3 -c "import sys;c=($S1-$S0)/$HZ;e=$EVENTS;print(f'{\"adapter (server side)\":<22} cpu {c:7.2f}s | per 1M events: cpu {c*1e6/e:8.1f}s')"
 
 # 2. Log: ingest the whole feed, checkpoint, witness cosign (one round).
-skey_origin=$(cut -d+ -f1 "$K/log.key.pub")
 measure "log ingest+checkpoint" "$BIN/harborlight-log" run --once --key "$K/log.key" --data "$B/data" --public "$B/public" \
   --feed "$B/feed.jsonl" --witness "@$K/witness.pub,http://127.0.0.1:$WPORT,operator"
 
