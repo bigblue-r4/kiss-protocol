@@ -7,6 +7,7 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 ## [Unreleased]
 
 ### Added
+- **Merkle consistency proofs** (RFC 6962 §2.1.2, verified per RFC 9162 §2.1.4.2): `witness prove-consistency` (from the local log, or from a copy of the leaf feed with no keys) and `witness verify-consistency`, which checks off-host, with two signed heads, the proof and the signer's public key, that the newer head extends the older one. A rewritten or rolled-back history fails, even if it was re-signed with the witness key. Cross-checked against `transparency-dev/merkle` for every tree size up to 130 (as a test oracle only; not a dependency). Two new fuzz targets. See `docs/mirror-setup.md`. No log or head format change.
 - **`pkg/pocverify` and `poc-verify`: a clean-room Proof-of-Control evidence verifier** (Go standard library only), written from the PoC Working Draft v0.1 schema documents at `54a7bc6` without reading upstream's validator or reference implementation.
   - Strict parser (duplicate keys rejected), full RFC 8785 canonicalization, Ed25519, and a leaf-to-root binding check.
   - 16 of the 17 upstream vectors agree with the upstream manifest, each negative rejected for its stated reason. `positive/modify-bound.json` is rejected on purpose: its root does not bind its MODIFY leaf (upstream #170).
