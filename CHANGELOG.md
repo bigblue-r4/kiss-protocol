@@ -4,6 +4,16 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+- **`pkg/pocverify` and `poc-verify`: a clean-room Proof-of-Control evidence verifier** (Go standard library only), written from the PoC Working Draft v0.1 schema documents at `54a7bc6` without reading upstream's validator or reference implementation.
+  - Strict parser (duplicate keys rejected), full RFC 8785 canonicalization, Ed25519, and a leaf-to-root binding check.
+  - 16 of the 17 upstream vectors agree with the upstream manifest, each negative rejected for its stated reason. `positive/modify-bound.json` is rejected on purpose: its root does not bind its MODIFY leaf (upstream #170).
+  - Upstream's validator accepts the tokens it signs. Not part of the release binaries.
+
+---
+
 ## [3.4.0] — 2026-11-24
 
 Highlights: a hash-pinned way to approve known drift (`witness accept`); drift that reports new files and new executables, not just changed ones; a log that survives a power cut and can be checked read-only while the daemon runs; an off-host leaf-hash feed and pinned audits that catch rewritten history; the first `gate` (source only); and release binaries that ship with a signed SBOM and GitHub build provenance. Built with Go 1.26.11, which clears 37 standard-library vulnerabilities the code reached on Go 1.25.
