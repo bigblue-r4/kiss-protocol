@@ -121,40 +121,8 @@ func Open(cfg Config) (*Log, error) {
 	}
 	l := &Log{cfg: cfg, held: map[string]uint64{}}
 	path := filepath.Join(cfg.PublicDir, "records.jsonl")
-	data, err := os.ReadFile(path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := l.load(path); err != nil {
 		return nil, err
-	}
-	if i := bytes.LastIndexByte(data, '\n'); i+1 != len(data) {
-		// A torn final write: move the partial line aside, keep it, record it.
-		tail := data[i+1:]
-		q := filepath.Join(cfg.DataDir, "quarantine", fmt.Sprintf("records-%d.tail", cfg.Now().UnixNano()))
-		if err := os.MkdirAll(filepath.Dir(q), 0o700); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(q, tail, 0o600); err != nil {
-			return nil, err
-		}
-		if err := os.Truncate(path, int64(i+1)); err != nil {
-			return nil, err
-		}
-		data = data[:i+1]
-		sum := sha256.Sum256(tail)
-		l.Recovery = append(l.Recovery, fmt.Sprintf("torn final record: %d bytes (sha256 %s) moved to %s", len(tail), hex.EncodeToString(sum[:]), filepath.Base(q)))
-	}
-	for n, line := range bytes.SplitAfter(data, []byte("\n")) {
-		if len(line) == 0 {
-			continue
-		}
-		line = line[:len(line)-1]
-		var r Record
-		if err := json.Unmarshal(line, &r); err != nil || r.Seq != uint64(n) {
-			return nil, fmt.Errorf("evlog: records.jsonl line %d is not record %d: refusing to start", n+1, n)
-		}
-		l.leaves = append(l.leaves, tlog.HashLeaf(line))
-		if r.FeedEnd > 0 || r.Kind == "feed_reset" {
-			l.feedEnd = r.FeedEnd
-		}
 	}
 	if raw, err := os.ReadFile(filepath.Join(cfg.PublicDir, "checkpoint")); err == nil {
 		s, err := checkpoint.Open(raw)
@@ -177,6 +145,7 @@ func Open(cfg Config) (*Log, error) {
 			return nil, fmt.Errorf("evlog: witness-state.json: %w", err)
 		}
 	}
+	var err error
 	l.f, err = os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, err
@@ -190,6 +159,59 @@ func Open(cfg Config) (*Log, error) {
 		return nil, err
 	}
 	return l, nil
+}
+
+// load reads records.jsonl as a stream: leaf hashes, the feed offset, and
+// the repair of a torn final write (moved aside, kept, and recorded).
+func (l *Log) load(path string) error {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	br := bufio.NewReaderSize(f, 1<<20)
+	var good int64
+	for n := 0; ; n++ {
+		line, err := br.ReadBytes('\n')
+		if err == io.EOF {
+			if len(line) > 0 {
+				return l.quarantineTail(path, good, line)
+			}
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		good += int64(len(line))
+		line = line[:len(line)-1]
+		var r Record
+		if err := json.Unmarshal(line, &r); err != nil || r.Seq != uint64(n) {
+			return fmt.Errorf("evlog: records.jsonl line %d is not record %d: refusing to start", n+1, n)
+		}
+		l.leaves = append(l.leaves, tlog.HashLeaf(line))
+		if r.FeedEnd > 0 || r.Kind == "feed_reset" {
+			l.feedEnd = r.FeedEnd
+		}
+	}
+}
+
+func (l *Log) quarantineTail(path string, good int64, tail []byte) error {
+	q := filepath.Join(l.cfg.DataDir, "quarantine", fmt.Sprintf("records-%d.tail", l.cfg.Now().UnixNano()))
+	if err := os.MkdirAll(filepath.Dir(q), 0o700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(q, tail, 0o600); err != nil {
+		return err
+	}
+	if err := os.Truncate(path, good); err != nil {
+		return err
+	}
+	sum := sha256.Sum256(tail)
+	l.Recovery = append(l.Recovery, fmt.Sprintf("torn final record: %d bytes (sha256 %s) moved to %s", len(tail), hex.EncodeToString(sum[:]), filepath.Base(q)))
+	return nil
 }
 
 // Close closes the records file.
@@ -281,6 +303,7 @@ func (l *Log) Ingest(feed string) (int, error) {
 		return 0, err
 	}
 	var rs []Record
+	total := 0
 	if st.Size() < l.feedEnd {
 		rs = append(rs, Record{Kind: "feed_reset", Detail: fmt.Sprintf("feed shrank from %d to %d bytes", l.feedEnd, st.Size())})
 		l.feedEnd = 0
@@ -318,16 +341,27 @@ func (l *Log) Ingest(feed string) (int, error) {
 			continue
 		}
 		rs = append(rs, l.feedRecord(append([]byte(nil), body...), off))
+		if len(rs) >= ingestChunk {
+			if err := l.appendLocked(rs); err != nil {
+				return total, err
+			}
+			total += len(rs)
+			l.feedEnd = off
+			rs = rs[:0]
+		}
 	}
 	if len(rs) == 0 {
-		return 0, nil
+		return total, nil
 	}
 	if err := l.appendLocked(rs); err != nil {
-		return 0, err
+		return total, err
 	}
 	l.feedEnd = off
-	return len(rs), nil
+	return total + len(rs), nil
 }
+
+// ingestChunk bounds the records held in memory and written per fsync.
+const ingestChunk = 10000
 
 // Checkpoint signs the current tree, submits it to every witness, and
 // publishes it with the cosignatures that verified. It is safe to call with

@@ -15,7 +15,7 @@
 package verify
 
 import (
-	"bytes"
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -198,22 +198,21 @@ func Run(ctx context.Context, o Options) *Result {
 	r.witnesses(s, o, now)
 
 	// 3. Records reproduce the checkpoint.
-	recs, err := fetch(ctx, o, "records.jsonl", o.MaxBytes)
+	// 3. Records reproduce the checkpoint (one streaming pass).
+	scan, err := r.scanRecords(ctx, o, c.Size)
 	if err != nil {
 		r.add("records.fetch", "Records available", Unverifiable, err.Error())
 		return r
 	}
-	r.Manifest.InputSHA256["records.jsonl"] = sha(recs)
-	leaves, parsed, ok := r.records(recs, c)
-	if !ok {
+	if !r.checkRecords(scan, c) {
 		return r
 	}
 
 	// 4. Consistency with what this evaluator verified before.
-	r.prior(o, c, leaves)
+	r.prior(o, c, scan.leaves)
 
 	// 5. Completeness (disclosed, never part of the pass/fail).
-	r.completeness(parsed, c.Size)
+	r.completeness(scan.acc, uint64(len(scan.leaves))-c.Size)
 
 	if o.StatePath != "" && r.overall() == Verified {
 		b, _ := json.MarshalIndent(State{Origin: c.Origin, Size: c.Size, Root: hex.EncodeToString(c.Root[:]), At: now.UTC().Format(time.RFC3339)}, "", "  ")
@@ -270,61 +269,92 @@ func (r *Result) witnesses(s *checkpoint.Signed, o Options, now time.Time) {
 	}
 }
 
-func (r *Result) records(data []byte, c checkpoint.Checkpoint) ([]tlog.Hash, []map[string]json.RawMessage, bool) {
-	if len(data) > 0 && data[len(data)-1] != '\n' {
-		data = data[:bytes.LastIndexByte(data, '\n')+1] // a partial line being written is not a record yet
-	}
-	var leaves []tlog.Hash
-	var parsed []map[string]json.RawMessage
-	for _, line := range bytes.Split(bytes.TrimSuffix(data, []byte("\n")), []byte("\n")) {
-		if len(data) == 0 {
-			break
-		}
-		leaves = append(leaves, tlog.HashLeaf(line))
-		var m map[string]json.RawMessage
-		if json.Unmarshal(line, &m) != nil {
-			m = nil
-		}
-		parsed = append(parsed, m)
-	}
-	n := uint64(len(leaves))
-	if n < c.Size {
-		r.add("records.count", "Every checkpointed record present", Failed, fmt.Sprintf("the checkpoint commits to %d records; the source has %d: evidence deleted or truncated", c.Size, n))
-		return nil, nil, false
-	}
-	if tlog.Root(leaves[:c.Size]) != c.Root {
-		r.add("records.root", "Records reproduce the checkpoint root", Failed, "the records do not hash to the signed root: a record was modified, inserted, removed or reordered"+locate(parsed[:c.Size]))
-		return nil, nil, false
-	}
-	for i := uint64(0); i < c.Size; i++ {
-		var seq uint64
-		if parsed[i] == nil || json.Unmarshal(parsed[i]["seq"], &seq) != nil || seq != i {
-			r.add("records.sequence", "Record sequence numbers", Failed, fmt.Sprintf("record %d is signed into the log but its seq field is wrong or missing: the log itself wrote a bad record", i))
-			return nil, nil, false
-		}
-	}
-	r.add("records.root", "Records reproduce the checkpoint root", Verified, fmt.Sprintf("%d records hash to the signed root", c.Size))
-	return leaves, parsed, true
+type recordScan struct {
+	leaves  []tlog.Hash
+	badSeq  int64  // first checkpointed record whose seq is not its position, or -1
+	anomaly string // description of it
+	acc     *compAcc
 }
 
-// locate names the first record whose seq does not match its position, a
-// hint for the evaluator; the root mismatch is the proof.
-func locate(parsed []map[string]json.RawMessage) string {
-	seen := map[uint64]bool{}
-	for i, m := range parsed {
-		var seq uint64
-		if m == nil || json.Unmarshal(m["seq"], &seq) != nil {
-			return fmt.Sprintf(" (record %d is not a valid record)", i)
-		}
-		if seen[seq] {
-			return fmt.Sprintf(" (record seq %d appears twice: a replayed record)", seq)
-		}
-		seen[seq] = true
-		if seq != uint64(i) {
-			return fmt.Sprintf(" (first out-of-place record at line %d, seq %d)", i+1, seq)
-		}
+type scanRecord struct {
+	Seq      *uint64         `json:"seq"`
+	Kind     string          `json:"kind"`
+	Rejected string          `json:"rejected"`
+	Detail   string          `json:"detail"`
+	Event    json.RawMessage `json:"event"`
+}
+
+// scanRecords streams records.jsonl once: leaf hashes for every complete
+// line, the sequence check and the completeness tallies for the first size
+// records, and the SHA-256 of the input for the manifest. Memory is 32
+// bytes per record plus the tallies.
+func (r *Result) scanRecords(ctx context.Context, o Options, size uint64) (*recordScan, error) {
+	rc, err := open(ctx, o, "records.jsonl")
+	if err != nil {
+		return nil, err
 	}
-	return ""
+	defer rc.Close()
+	h := sha256.New()
+	lr := &io.LimitedReader{R: rc, N: o.MaxBytes + 1}
+	br := bufio.NewReaderSize(io.TeeReader(lr, h), 1<<20)
+	sc := &recordScan{badSeq: -1, acc: newCompAcc()}
+	for i := uint64(0); ; i++ {
+		line, err := br.ReadBytes('\n')
+		if err == io.EOF {
+			break // a partial last line being written is not a record yet
+		}
+		if err != nil {
+			return nil, fmt.Errorf("records.jsonl: %w", err)
+		}
+		line = line[:len(line)-1]
+		sc.leaves = append(sc.leaves, tlog.HashLeaf(line))
+		if i >= size {
+			continue
+		}
+		var rec scanRecord
+		if json.Unmarshal(line, &rec) != nil || rec.Seq == nil {
+			if sc.badSeq < 0 {
+				sc.badSeq, sc.anomaly = int64(i), fmt.Sprintf("line %d is not a valid record", i+1)
+			}
+			continue
+		}
+		if *rec.Seq != i && sc.badSeq < 0 {
+			sc.badSeq = int64(i)
+			if *rec.Seq < i {
+				sc.anomaly = fmt.Sprintf("line %d carries seq %d, which already appeared: a replayed record", i+1, *rec.Seq)
+			} else {
+				sc.anomaly = fmt.Sprintf("line %d carries seq %d: records missing or out of order from here", i+1, *rec.Seq)
+			}
+		}
+		sc.acc.add(&rec)
+	}
+	if lr.N <= 0 {
+		return nil, fmt.Errorf("records.jsonl: larger than %d bytes", o.MaxBytes)
+	}
+	r.Manifest.InputSHA256["records.jsonl"] = hex.EncodeToString(h.Sum(nil))
+	return sc, nil
+}
+
+func (r *Result) checkRecords(sc *recordScan, c checkpoint.Checkpoint) bool {
+	n := uint64(len(sc.leaves))
+	if n < c.Size {
+		r.add("records.count", "Every checkpointed record present", Failed, fmt.Sprintf("the checkpoint commits to %d records; the source has %d: evidence deleted or truncated", c.Size, n))
+		return false
+	}
+	if tlog.Root(sc.leaves[:c.Size]) != c.Root {
+		hint := ""
+		if sc.anomaly != "" {
+			hint = " (" + sc.anomaly + ")"
+		}
+		r.add("records.root", "Records reproduce the checkpoint root", Failed, "the records do not hash to the signed root: a record was modified, inserted, removed or reordered"+hint)
+		return false
+	}
+	if sc.badSeq >= 0 {
+		r.add("records.sequence", "Record sequence numbers", Failed, fmt.Sprintf("record %d is signed into the log but its seq field is wrong or missing: the log itself wrote a bad record", sc.badSeq))
+		return false
+	}
+	r.add("records.root", "Records reproduce the checkpoint root", Verified, fmt.Sprintf("%d records hash to the signed root", c.Size))
+	return true
 }
 
 func (r *Result) prior(o Options, c checkpoint.Checkpoint, leaves []tlog.Hash) {
@@ -362,74 +392,81 @@ func (r *Result) prior(o Options, c checkpoint.Checkpoint, leaves []tlog.Hash) {
 	}
 }
 
-func (r *Result) completeness(parsed []map[string]json.RawMessage, size uint64) {
-	cp := &r.Completeness
-	cp.BySource = map[string]int{}
-	cp.Uncheckpointed = uint64(len(parsed)) - size
-	type batch struct {
-		count int
-		seen  map[int]int
+type compAcc struct {
+	c       Completeness
+	batches map[string]*batchAcc
+	lastSeq map[string]int64
+}
+
+type batchAcc struct {
+	count int
+	seen  map[int]int
+}
+
+func newCompAcc() *compAcc {
+	return &compAcc{c: Completeness{BySource: map[string]int{}}, batches: map[string]*batchAcc{}, lastSeq: map[string]int64{}}
+}
+
+func (a *compAcc) add(rec *scanRecord) {
+	cp := &a.c
+	switch {
+	case rec.Kind != "":
+		cp.LogNotices = append(cp.LogNotices, rec.Kind+": "+rec.Detail)
+		return
+	case rec.Rejected != "":
+		cp.Rejected++
+		return
 	}
-	batches := map[string]*batch{}
-	lastSeq := map[string]int64{}
-	for _, m := range parsed[:size] {
-		var kind, rejected, detail string
-		_ = json.Unmarshal(m["kind"], &kind)
-		_ = json.Unmarshal(m["rejected"], &rejected)
-		_ = json.Unmarshal(m["detail"], &detail)
+	cp.Events++
+	var ev struct {
+		Source     string `json:"source"`
+		Batch      string `json:"batch"`
+		BatchIndex *int   `json:"batch_index"`
+		BatchCount int    `json:"batch_count"`
+		SourceSeq  *int64 `json:"source_seq"`
+	}
+	_ = json.Unmarshal(rec.Event, &ev)
+	src := ev.Source
+	if src == "" {
+		src = "(none)"
+	}
+	cp.BySource[src]++
+	if ev.Batch != "" && ev.BatchIndex != nil {
+		b := a.batches[ev.Batch]
+		if b == nil {
+			b = &batchAcc{count: ev.BatchCount, seen: map[int]int{}}
+			a.batches[ev.Batch] = b
+		}
+		b.seen[*ev.BatchIndex]++
+	}
+	if ev.SourceSeq != nil {
+		last, ok := a.lastSeq[src]
 		switch {
-		case kind != "":
-			cp.LogNotices = append(cp.LogNotices, kind+": "+detail)
-			continue
-		case rejected != "":
-			cp.Rejected++
-			continue
+		case ok && *ev.SourceSeq == last:
+			cp.SequenceRepeats = append(cp.SequenceRepeats, fmt.Sprintf("%s: seq %d repeated", src, last))
+		case ok && *ev.SourceSeq > last+1:
+			cp.SequenceGaps = append(cp.SequenceGaps, fmt.Sprintf("%s: %d missing between %d and %d", src, *ev.SourceSeq-last-1, last, *ev.SourceSeq))
+		case ok && *ev.SourceSeq < last:
+			cp.SequenceRepeats = append(cp.SequenceRepeats, fmt.Sprintf("%s: seq went back from %d to %d (redelivery or reset)", src, last, *ev.SourceSeq))
 		}
-		cp.Events++
-		var ev struct {
-			Source     string `json:"source"`
-			Batch      string `json:"batch"`
-			BatchIndex *int   `json:"batch_index"`
-			BatchCount int    `json:"batch_count"`
-			SourceSeq  *int64 `json:"source_seq"`
-		}
-		_ = json.Unmarshal(m["event"], &ev)
-		src := ev.Source
-		if src == "" {
-			src = "(none)"
-		}
-		cp.BySource[src]++
-		if ev.Batch != "" && ev.BatchIndex != nil {
-			b := batches[ev.Batch]
-			if b == nil {
-				b = &batch{count: ev.BatchCount, seen: map[int]int{}}
-				batches[ev.Batch] = b
-			}
-			b.seen[*ev.BatchIndex]++
-		}
-		if ev.SourceSeq != nil {
-			last, ok := lastSeq[src]
-			switch {
-			case ok && *ev.SourceSeq == last:
-				cp.SequenceRepeats = append(cp.SequenceRepeats, fmt.Sprintf("%s: seq %d repeated", src, last))
-			case ok && *ev.SourceSeq > last+1:
-				cp.SequenceGaps = append(cp.SequenceGaps, fmt.Sprintf("%s: %d missing between %d and %d", src, *ev.SourceSeq-last-1, last, *ev.SourceSeq))
-			case ok && *ev.SourceSeq < last:
-				cp.SequenceRepeats = append(cp.SequenceRepeats, fmt.Sprintf("%s: seq went back from %d to %d (redelivery or reset)", src, last, *ev.SourceSeq))
-			}
-			if !ok || *ev.SourceSeq > last {
-				lastSeq[src] = *ev.SourceSeq
-			}
+		if !ok || *ev.SourceSeq > last {
+			a.lastSeq[src] = *ev.SourceSeq
 		}
 	}
-	ids := make([]string, 0, len(batches))
-	for id := range batches {
+}
+
+func (r *Result) completeness(a *compAcc, uncheckpointed uint64) {
+	r.Completeness = a.c
+	cp := &r.Completeness
+	cp.Uncheckpointed = uncheckpointed
+	ids := make([]string, 0, len(a.batches))
+	for id := range a.batches {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 	cp.Batches = len(ids)
 	for _, id := range ids {
-		b := batches[id]
+		b := a.batches[id]
 		missing := 0
 		var dups []string
 		for i := 0; i < b.count; i++ {
@@ -449,10 +486,15 @@ func (r *Result) completeness(parsed []map[string]json.RawMessage, size uint64) 
 			cp.IncompleteBatch = append(cp.IncompleteBatch, fmt.Sprintf("batch %s: %d of %d entries missing", id, missing, b.count))
 		}
 	}
-	title := "Completeness indicators (disclosed, not proven)"
+	const maxListed = 200
+	for _, l := range []*[]string{&cp.IncompleteBatch, &cp.DuplicateBatch, &cp.SequenceGaps, &cp.SequenceRepeats, &cp.LogNotices} {
+		if len(*l) > maxListed {
+			*l = append((*l)[:maxListed], fmt.Sprintf("... and %d more", len(*l)-maxListed))
+		}
+	}
 	detail := fmt.Sprintf("%d events, %d rejected lines, %d batches; %d incomplete batches, %d duplicate-delivery findings, %d sequence gaps, %d repeats; %d records after the checkpoint not yet covered",
 		cp.Events, cp.Rejected, cp.Batches, len(cp.IncompleteBatch), len(cp.DuplicateBatch), len(cp.SequenceGaps), len(cp.SequenceRepeats), cp.Uncheckpointed)
-	c := r.add("completeness", title, Verified, detail)
+	c := r.add("completeness", "Completeness indicators (disclosed, not proven)", Verified, detail)
 	if len(cp.IncompleteBatch)+len(cp.DuplicateBatch)+len(cp.SequenceGaps)+len(cp.SequenceRepeats)+cp.Rejected+len(cp.LogNotices) > 0 {
 		c.Warning = "The log is intact, but its input shows gaps, repeats, rejected lines or log notices. See the completeness section."
 	}
@@ -498,7 +540,7 @@ func baseDisclosures() []string {
 	}
 }
 
-func fetch(ctx context.Context, o Options, name string, max int64) ([]byte, error) {
+func open(ctx context.Context, o Options, name string) (io.ReadCloser, error) {
 	if strings.HasPrefix(o.Source, "http://") || strings.HasPrefix(o.Source, "https://") {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(o.Source, "/")+"/"+name, nil)
 		if err != nil {
@@ -508,22 +550,22 @@ func fetch(ctx context.Context, o Options, name string, max int64) ([]byte, erro
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}
-		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
 			return nil, fmt.Errorf("%s: HTTP %d", name, resp.StatusCode)
 		}
-		b, err := io.ReadAll(io.LimitReader(resp.Body, max+1))
-		if err == nil && int64(len(b)) > max {
-			err = fmt.Errorf("%s: larger than %d bytes", name, max)
-		}
-		return b, err
+		return resp.Body, nil
 	}
-	f, err := os.Open(filepath.Join(o.Source, name))
+	return os.Open(filepath.Join(o.Source, name))
+}
+
+func fetch(ctx context.Context, o Options, name string, max int64) ([]byte, error) {
+	rc, err := open(ctx, o, name)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, max+1))
+	defer rc.Close()
+	b, err := io.ReadAll(io.LimitReader(rc, max+1))
 	if err == nil && int64(len(b)) > max {
 		err = fmt.Errorf("%s: larger than %d bytes", name, max)
 	}
