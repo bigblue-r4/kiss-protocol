@@ -88,6 +88,7 @@ jobs:
           - { pkg: ./internal/mirror/, target: FuzzPushJSON }
           - { pkg: ./internal/merkle/, target: FuzzVerifyAdversarial }
           - { pkg: ./internal/merkle/, target: FuzzVerifyConsistencyAdversarial }
+          - { pkg: ./pkg/pocverify/, target: FuzzParseCanonical }
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -140,6 +141,7 @@ jobs:
           - { pkg: ./internal/merkle/, target: FuzzRoot }
           - { pkg: ./internal/merkle/, target: FuzzConsistency }
           - { pkg: ./internal/merkle/, target: FuzzVerifyConsistencyAdversarial }
+          - { pkg: ./pkg/pocverify/, target: FuzzParseCanonical }
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
