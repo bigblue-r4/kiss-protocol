@@ -1,6 +1,6 @@
 # SGAIL Stage 2: Minimum Commercial Pilot, plan
 
-2026-11-24 · Witness v3.4.0 (`a78b609`) · status: **PLAN ONLY. No implementation has started.**
+2026-11-24 · Witness v3.4.0 (`a78b609`) · status: **implementation authorized 2026-11-25** (see §0 and §9).
 
 Labels used below:
 - **[VERIFIED]:** checked in our code, our tests, or a cited public document.
@@ -12,7 +12,7 @@ Labels used below:
 The mission says: *"Do not begin implementation until the Phase 1 conformance assessment has been completed and reviewed by SGAIL leadership."*
 
 - **Phase 1 is complete:** branch `poc/phase1-gap-matrix`, commit `9081ac2`.
-- **Leadership review:** **not yet confirmed.** This plan, the component evaluation and the decisions in §9 are analysis, not implementation.
+- **Leadership review:** on 2026-11-25 Chris (founder) answered the §9 decisions with "Proceed with one through four as you see fit". This is recorded as authorization to implement, given by leadership. It is **not** a record of a separate written review of Phase 1; if one is wanted for the file, it is still to be written.
 - **Already open, and carried over from the Proof-of-Control (PoC) plan:**
   - PR #77, consistency proofs;
   - PR #78, the clean-room evidence verifier.
@@ -196,7 +196,17 @@ Effort is in engineer-weeks (ew), at about one AI-assisted founder-engineer, wit
 
 **Not pursued now:** the interception gateway, the gate deployment (C4), and HSM custody.
 
-## 9. Decisions needed before implementation
+## 9. Decisions (answered 2026-11-25)
+
+Recorded answers, under Chris's "as you see fit":
+
+- **D1:** proceed (see §0).
+- **D2: SHA-256 for new pilot logs.** Implemented as a separate pilot evidence log (`harborlight-log`, packages `pkg/tlog` and `pkg/checkpoint`). The existing Witness keeps its BLAKE3 log and formats unchanged; no existing install is affected.
+- **D3: plaintext synthetic records only.** The pilot log stores and publishes records unencrypted. It must not be pointed at real customer data without a separate decision; the deployment guide says so.
+- **D4: `golang.org/x/mod` accepted** (signed-note log signatures, and `sumdb/tlog` as an in-tree test oracle for the SHA-256 tree).
+- **Item 5 unchanged:** applying to the public witness network and any Cloudflare contact still need approval.
+
+Original questions:
 
 1. **D1: authorization gate.** Confirm that leadership has reviewed Phase 1.
 2. **D2: hash.** SHA-256 for new pilot logs (recommended), dual trees, or BLAKE3 with no ecosystem witness.
