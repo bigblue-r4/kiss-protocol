@@ -6,6 +6,9 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- **Release checksum files now verify as documented.** Since v3.1.0, the first release to ship them, each `<binary>.sha256` named `dist/<binary>`, so `sha256sum -c witness_linux_amd64.sha256`, as the release notes say, failed with "No such file or directory" in the download directory. The files now name the binary alone, and the release fails if one names a path or does not verify. The published hashes were always correct; for v3.1.0 to v3.4.0 check with `sed 's#dist/##' witness_linux_amd64.sha256 | sha256sum -c`. The cosign signatures and build provenance were not affected.
+
 ### Added
 - **Stage 2 pilot (new, separate from the Witness log): witnessed, independently verifiable evidence for shadow-mode telemetry.** Synthetic or explicitly authorised non-sensitive data only; no certification or Proof-of-Control Tier 3/4 claim. See `pilot/README.md` and `docs/stage2/`.
   - `pkg/tlog`: RFC 6962 SHA-256 tree with inclusion and consistency proofs, cross-checked against `golang.org/x/mod/sumdb/tlog`.
