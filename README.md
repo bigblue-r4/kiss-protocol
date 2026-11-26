@@ -280,6 +280,8 @@ cosign verify-blob \
 sha256sum -c witness_linux_amd64.sha256
 ```
 
+The `.sha256` files of v3.1.0 to v3.4.0 name `dist/<binary>`, so the plain check above fails on them with "No such file or directory". The hash in them is correct; for those releases use `sed 's#dist/##' witness_linux_amd64.sha256 | sha256sum -c`.
+
 Each release also carries:
 
 - **Build provenance** for every binary: a GitHub attestation saying which workflow, commit and tag built it. Check it with the [GitHub CLI](https://cli.github.com/):
