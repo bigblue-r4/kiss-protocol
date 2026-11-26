@@ -49,9 +49,19 @@ jobs:
                 CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH GOTOOLCHAIN=local \
                   go build -trimpath -ldflags="-s -w" -buildvcs=false \
                   -o "$OUT" ./cmd/$BIN
-                sha256sum "$OUT" > "${OUT}.sha256"
+                # Run from inside dist/ so the file names the binary alone and
+                # `sha256sum -c` works where the user downloaded it.
+                (cd dist && sha256sum "${BIN}_${GOOS}_${GOARCH}" > "${BIN}_${GOOS}_${GOARCH}.sha256")
               done
             done
+          done
+
+          # Fail the release if a checksum file names a path, or does not verify
+          # from the download directory.
+          cd dist
+          for f in *.sha256; do
+            if grep -q / "$f"; then echo "::error::$f names a path: $(cat "$f")"; exit 1; fi
+            sha256sum -c "$f"
           done
 
       # H08 C07: a CycloneDX SBOM per binary, read from the Go build info embedded
