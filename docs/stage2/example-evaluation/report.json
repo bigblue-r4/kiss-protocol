@@ -12,7 +12,7 @@
       "id": "witness.quorum",
       "title": "Witness quorum (1 of 1 pinned witnesses, fresh within 5m0s)",
       "status": "VERIFIED",
-      "detail": "1 fresh valid cosignature(s); newest 2026-11-25T22:12:23Z",
+      "detail": "1 fresh valid cosignature(s); newest 2026-11-26T19:15:14Z",
       "warning": "The quorum is met only with witnesses marked as run by the log operator. This demonstrates the protocol; it gives no independence, and the operator could show different histories to different verifiers."
     },
     {
@@ -38,16 +38,16 @@
   ],
   "origin": "pilot.example/demo-log",
   "checkpoint_size": 2251,
-  "checkpoint_root": "1482e4bdae93de98d1ccffe14d5eef43b17bd8c797dcd30f184f90524b25982b",
+  "checkpoint_root": "ba49f68fcb458690e8ec5a33153a092e9b2e98a4d1bf98b4745c247ca68e5f7e",
   "witnesses": [
     {
       "name": "pilot.example/demo-witness",
-      "key": "pilot.example/demo-witness+f4f44d8d+BFgou4sJbgOOXKIyPl90RGDSWDTF+k6W2DDqF/lDUY8H",
+      "key": "pilot.example/demo-witness+c0094975+BDE+XR89msqEb5u3tu+XRIH/GnQfFz+sC8hbjcvWfmg3",
       "operator_controlled": true,
       "present": true,
       "valid": true,
       "fresh": true,
-      "timestamp": "2026-11-25T22:12:23Z"
+      "timestamp": "2026-11-26T19:15:14Z"
     }
   ],
   "completeness": {
@@ -58,7 +58,7 @@
     },
     "batches": 9,
     "duplicate_batch_entries": [
-      "batch a74bd588de0d3518c0da66709506bd9e: all 250 entries recorded 2 times (the whole batch was delivered again)"
+      "batch 0b928220cd95af9de123bd28befa33bb: all 250 entries recorded 2 times (the whole batch was delivered again)"
     ],
     "records_after_checkpoint": 0
   },
@@ -73,19 +73,19 @@
   ],
   "manifest": {
     "source": "http://127.0.0.1:18080",
-    "verified_at": "2026-11-25T22:12:23Z",
-    "verifier": "harborlight-verify v1.0.1-0.20261125221212-ab49642f1006 ab49642f10060abee3734ae56dc410b0b50496f0",
-    "pinned_log_key": "pilot.example/demo-log+7f4f60e4+Ab/pTn4i5F3MEXc6uakdLLkNNrLe3/IF+c1JOofvck0B",
+    "verified_at": "2026-11-26T19:15:14Z",
+    "verifier": "harborlight-verify v1.0.1-0.20261126002748-ae94d6648bca+dirty ae94d6648bcaf137d42680612c3b5f5b03af6e4b",
+    "pinned_log_key": "pilot.example/demo-log+aa4c9768+AcN1C92SFRDQkZ0bJzZWmto8SlrHa/l1u9a/2XW+m+Vw",
     "pinned_witness_keys": [
-      "pilot.example/demo-witness+f4f44d8d+BFgou4sJbgOOXKIyPl90RGDSWDTF+k6W2DDqF/lDUY8H"
+      "pilot.example/demo-witness+c0094975+BDE+XR89msqEb5u3tu+XRIH/GnQfFz+sC8hbjcvWfmg3"
     ],
     "quorum": 1,
     "max_checkpoint_age": "5m0s",
     "prior_state": "<workdir>/evaluator-state.json",
     "input_sha256": {
-      "checkpoint": "b8e0e0c6bffe28e168b48dbe40fbee7676a654c909eb451e7031495988063dff",
-      "records.jsonl": "83c91708027051e9e3221dcc14ee4a675f0d8ba6d65ad02520070150603d3db7"
+      "checkpoint": "313ac7dd23aaafd2985d100f94a8609364154cde075054f1f28df12251e482f4",
+      "records.jsonl": "7752b9651221650c1567ce34b0b3b26811158b06703f839cf972394ce41425b7"
     },
-    "checkpoint_note": "pilot.example/demo-log\n2251\nFILkva6T3pjRzP/hTV7vQ7F72MeX3NMPGE+QUkslmCs=\n\n— pilot.example/demo-log f09g5GtLWxuGARYeezil1HX56MGzlNjdLSzszspTkUPhsma1wmw+S8iz7ygZzoTEhOJ8OA/lPIV/gLoEtT3ahp886wU=\n— pilot.example/demo-witness 9PRNjQAAAABrB11HK2f2F0F1GELMP0QaphExFv/SAGvqgiJHy2g2xEcH8ZE42lg2YW1/3a2WG8nh9KuM/mEgDCWN5z6MeJ9M4zBiCA==\n"
+    "checkpoint_note": "pilot.example/demo-log\n2251\nukn2j8tFhpDo7FozFToJLpsumKTRv5i0dFwkfKaOX34=\n\n— pilot.example/demo-log qkyXaLObzQg6KYA2uVobLuIVbbsH6oibq0h9vnQRBbW1Sp1qBkkNj5cbThBoHifMuKMeDzHIRgr/OtVBQa/kIhLaFQY=\n— pilot.example/demo-witness wAlJdQAAAABrCIVCsQw9j9QYXuUKs83jnDjj1hizwHxzFmc5hmcpff/CwM4GjGtd9RkkYQ1YIo+NyG4Ppj/M/WPWUcvHIyVfj3QjAQ==\n"
   }
 }

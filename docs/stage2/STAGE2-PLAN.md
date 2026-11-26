@@ -37,7 +37,7 @@ Branch `stage2/pilot`. Everything below was run on the development workstation u
 | Docker Compose | **Written, not run** | `pilot/compose.yaml`, `pilot/Dockerfile`. No Docker on the development workstation. `pilot/demo.sh` runs the same topology and is tested |
 | Shadow mode | **Done, by construction** | The adapter is a sink with no Cloudflare credential and no outbound request |
 | Completeness limits and trust boundaries disclosed | **Done** | In every report (disclosures, completeness section, witness independence); `THREAT-MODEL.md` |
-| Adversarial regression tests | **Done** | 21 cases (`harborlight-adversarial`, also `go test`), plus adapter and interop tests |
+| Adversarial regression tests | **Done** | 29 cases (`harborlight-adversarial`, also `go test`; 2 pinned known limits), plus adapter, interop and Rekor tests |
 | Lucid kept inside the research harness | **Done** | No pilot component references it |
 | Exportable verification report | **Done** | `--report` (single-file HTML, no scripts) and `--json` |
 | Costs, resources, maintenance | **Done (measured)** | `BENCHMARKS-AND-COST.md`. Prices are deliberately left as variables |
@@ -52,7 +52,7 @@ Branch `stage2/pilot`. Everything below was run on the development workstation u
 | D2 checkpoints + witness client | done |
 | D3 Cloudflare adapter + generator | done |
 | D4 install package | `demo.sh` tested; Compose written, not run |
-| D5 adversarial suite | done (21/21) |
+| D5 adversarial suite | done (29/29, 2 of them known limits) |
 | D6 report | done |
 | D7 benchmarks | done (1M events, one machine) |
 | D8 cost per 1M | method plus quantities; prices TO VERIFY |
@@ -74,6 +74,8 @@ Branch `stage2/pilot`. Everything below was run on the development workstation u
 | Witness | INTEGRATE (omniwitness) | Not ours to write. Real independence comes from another operator |
 | Third-party witness operation | OUTSOURCE (needs approval) | |
 | Report UI | BUILD (static HTML) | No server, no JavaScript |
+| Public time anchoring in Rekor v1 (optional, off by default; 2026-11-26) | BUILD client + INTEGRATE Rekor | Gives a third-party signed timestamp, and catches a rewrite even when the log key and every witness collude, without anyone agreeing to witness the log. About 400 lines of Go standard library, checked against a real public Rekor entry. Uploading to the public Rekor needs approval. Chosen before an independent witness because it needs no outside party's agreement; it does not replace one (Rekor checks no consistency between anchors) |
+| Rekor v2 (no signed entry timestamp; needs an RFC 3161 TSA) | DEFER | v1 still serves the public instance |
 | ML-DSA-44 cosignatures, Tessera, HSM, RFC 3161, an inline gateway | DEFER | Disclosed |
 | Container base and toolchain | INTEGRATE, digest-pinned | |
 
@@ -83,6 +85,7 @@ Branch `stage2/pilot`. Everything below was run on the development workstation u
 2. Add the pilot binaries to `release.yml` (signatures, SBOM, provenance).
 3. Wire `pkg/pocverify` (PR #78) into the report.
 4. D13, and with approval, an independent witness.
+5. With approval, a first real anchor in the public Sigstore Rekor (it is permanent and public). Everything up to the upload is tested.
 
 ## 1. What the pilot is, and is not
 
@@ -270,6 +273,7 @@ Recorded answers, under leadership's "as you see fit":
 - **D3: plaintext synthetic records only.** The pilot log stores and publishes records unencrypted. It must not be pointed at real customer data without a separate decision; the deployment guide says so.
 - **D4: `golang.org/x/mod` accepted** (signed-note log signatures, and `sumdb/tlog` as an in-tree test oracle for the SHA-256 tree).
 - **Item 5 unchanged:** applying to the public witness network and any Cloudflare contact still need approval.
+- **2026-11-26: Rekor first, then an independent witness** (leadership left the order to engineering). Built as an optional add-on; posting to the public Rekor still needs approval.
 
 Original questions:
 

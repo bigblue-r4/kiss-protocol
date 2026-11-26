@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/bigblue-r4/kiss-protocol/internal/pilot/evlog"
+	"github.com/bigblue-r4/kiss-protocol/internal/pilot/rekor"
 	"github.com/bigblue-r4/kiss-protocol/pkg/checkpoint"
 	"golang.org/x/mod/sumdb/note"
 )
@@ -41,7 +42,15 @@ func usage(w io.Writer) {
   harborlight-log run --key FILE --data DIR --public DIR [--feed FILE]
                       [--witness 'VKEY|@FILE,URL[,operator]']... [--operator-witness NAME]...
                       [--interval 30s] [--listen ADDR] [--once]
+                      [--rekor-url URL --anchor-key FILE [--anchor-interval 1h]]
       Ingest FILE, checkpoint every interval, serve DIR on ADDR.
+      With --rekor-url, also anchor new checkpoints in that Rekor v1 log, at
+      most once per anchor interval. Off by default: an anchor in a public
+      Rekor is a permanent public record of the log's origin, a size and a
+      root, and the anchoring public key.
+  harborlight-log anchor-keygen --out FILE
+      Write a new ECDSA P-256 anchoring key to FILE (mode 0600) and its public
+      key to FILE.pub. Use it for nothing else.
   harborlight-log demo-init --dir DIR [--log-origin O] [--witness-name N]
       Create the demo's keys once (software keys, demo only).
 `)
@@ -57,6 +66,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return keygen(args[1:], stdout, stderr)
 	case "run":
 		return serve(args[1:], stderr)
+	case "anchor-keygen":
+		return anchorKeygen(args[1:], stdout, stderr)
 	case "demo-init":
 		return demoInit(args[1:], stdout, stderr)
 	default:
@@ -105,6 +116,41 @@ func keygen(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func anchorKeygen(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("anchor-keygen", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	out := fs.String("out", "", "private key file")
+	if fs.Parse(args) != nil || *out == "" {
+		usage(stderr)
+		return 2
+	}
+	priv, pub, err := rekor.GenerateKey()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	f, err := os.OpenFile(*out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		fmt.Fprintln(stderr, "refusing to overwrite or create key:", err)
+		return 1
+	}
+	if _, err := f.Write(priv); err != nil {
+		f.Close()
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if err := f.Close(); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if err := os.WriteFile(*out+".pub", pub, 0o644); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	fmt.Fprint(stdout, string(pub))
+	return 0
+}
+
 // parseWitness parses "VKEY,URL[,operator]"; VKEY may be @FILE.
 func parseWitness(s string) (evlog.Witness, error) {
 	parts := strings.Split(s, ",")
@@ -139,6 +185,9 @@ func serve(args []string, stderr io.Writer) int {
 	var witnesses, operatorRun multi
 	fs.Var(&witnesses, "witness", "'VKEY,URL[,operator]' of a tlog-witness; VKEY may be @FILE; ',operator' marks one this operator runs (repeatable)")
 	fs.Var(&operatorRun, "operator-witness", "name of a witness run by this operator (disclosed; repeatable)")
+	rekorURL := fs.String("rekor-url", "", "Rekor v1 base URL to anchor checkpoints in (off when empty)")
+	anchorKey := fs.String("anchor-key", "", "ECDSA P-256 anchoring key (from anchor-keygen)")
+	anchorEvery := fs.Duration("anchor-interval", time.Hour, "at most one Rekor anchor per interval")
 	if fs.Parse(args) != nil || *keyPath == "" || *data == "" || *public == "" {
 		usage(stderr)
 		return 2
@@ -172,6 +221,24 @@ func serve(args []string, stderr io.Writer) int {
 		}
 		w.OperatorControlled = w.OperatorControlled || opRun[w.Key.Name]
 		cfg.Witnesses = append(cfg.Witnesses, w)
+	}
+	if (*rekorURL == "") != (*anchorKey == "") {
+		lg.Print("--rekor-url and --anchor-key go together")
+		return 2
+	}
+	if *rekorURL != "" {
+		b, err := os.ReadFile(*anchorKey)
+		if err != nil {
+			lg.Print(err)
+			return 1
+		}
+		k, err := rekor.ParsePrivateKey(b)
+		if err != nil {
+			lg.Print("anchor key: ", err)
+			return 1
+		}
+		cfg.Anchor = &evlog.AnchorConfig{URL: *rekorURL, Key: k, Interval: *anchorEvery}
+		lg.Printf("anchoring new checkpoints in %s at most every %s; each anchor is public and permanent there", *rekorURL, *anchorEvery)
 	}
 	l, err := evlog.Open(cfg)
 	if err != nil {
@@ -211,6 +278,9 @@ func serve(args []string, stderr io.Writer) int {
 			if !w.OK {
 				lg.Printf("witness %s: %s", w.Name, w.Error)
 			}
+		}
+		if a := l.LastAnchor(); a != nil && a.Error != "" {
+			lg.Printf("rekor anchor: %s", a.Error)
 		}
 	}
 	round()

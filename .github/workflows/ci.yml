@@ -84,7 +84,7 @@ jobs:
           grep -q '^VERIFIED: ' "$RUNNER_TEMP/demo.out"
           grep -q '^FAILED: Records reproduce' "$RUNNER_TEMP/demo.out"
           grep -q '^UNVERIFIABLE: Witness quorum' "$RUNNER_TEMP/demo.out"
-          grep -q '21 of 21 cases matched' "$RUNNER_TEMP/demo.out"
+          grep -q '29 of 29 cases matched' "$RUNNER_TEMP/demo.out"
 
   reproducible-build:
     name: reproducible build
@@ -121,6 +121,7 @@ jobs:
           - { pkg: ./pkg/pocverify/, target: FuzzParseCanonical }
           - { pkg: ./pkg/tlog/, target: FuzzVerifyConsistency }
           - { pkg: ./pkg/checkpoint/, target: FuzzOpen }
+          - { pkg: ./internal/pilot/rekor/, target: FuzzVerifyEntry }
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -176,6 +177,7 @@ jobs:
           - { pkg: ./pkg/pocverify/, target: FuzzParseCanonical }
           - { pkg: ./pkg/tlog/, target: FuzzVerifyConsistency }
           - { pkg: ./pkg/checkpoint/, target: FuzzOpen }
+          - { pkg: ./internal/pilot/rekor/, target: FuzzVerifyEntry }
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:

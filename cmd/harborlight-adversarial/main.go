@@ -38,7 +38,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "suite error:", err)
 		return 2
 	}
-	failed := 0
+	failed, limits := 0, 0
 	fmt.Fprintf(stdout, "%-4s %-32s %-13s %-13s %s\n", "", "case", "expected", "got", "attack")
 	for _, o := range out {
 		mark := "ok"
@@ -46,12 +46,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 			mark = "FAIL"
 			failed++
 		}
+		if o.KnownLimit {
+			limits++
+		}
 		fmt.Fprintf(stdout, "%-4s %-32s %-13s %-13s %s\n", mark, o.ID, o.Expect, o.Got, o.Attack)
 		if !o.Pass {
 			fmt.Fprintf(stdout, "     verifier said: %s\n", o.Summary)
 		}
 	}
 	fmt.Fprintf(stdout, "\n%d of %d cases matched the expected result.\n", len(out)-failed, len(out))
+	if limits > 0 {
+		fmt.Fprintf(stdout, "%d of them are KNOWN LIMITS: attacks the pilot does not stop under the stated conditions. They match when the verifier behaves as disclosed, not when the attack is stopped.\n", limits)
+	}
 	if *jsonOut != "" {
 		b, _ := json.MarshalIndent(out, "", "  ")
 		if err := os.WriteFile(*jsonOut, b, 0o644); err != nil {

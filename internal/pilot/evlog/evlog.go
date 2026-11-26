@@ -10,6 +10,8 @@
 //	checkpoints/<N>    the checkpoint at size N, kept
 //	log.json           informational descriptor (keys in it are NOT trusted by the verifier)
 //	status.json        per-witness outcome of the last checkpoint round
+//	anchor.json        the latest Rekor anchor (only if anchoring is on)
+//	anchors/<N>.json   the Rekor anchor of the checkpoint at size N, kept
 //
 // The private data directory holds the witness state and quarantined bytes.
 // The signing key is read from a separate file.
@@ -65,6 +67,7 @@ type Config struct {
 	MaxRecord          int
 	Now                func() time.Time
 	HTTP               *http.Client
+	Anchor             *AnchorConfig // nil: no Rekor anchoring
 }
 
 // Record is one line of records.jsonl. Exactly one of Event, Rejected or
@@ -92,13 +95,15 @@ type WitnessStatus struct {
 
 // Log is an open evidence log. One process writes it.
 type Log struct {
-	cfg      Config
-	mu       sync.Mutex
-	f        *os.File
-	leaves   []tlog.Hash
-	feedEnd  int64
-	held     map[string]uint64
-	Recovery []string // what Open had to repair, also written as records
+	cfg        Config
+	mu         sync.Mutex
+	f          *os.File
+	leaves     []tlog.Hash
+	feedEnd    int64
+	held       map[string]uint64
+	anchor     anchorState
+	lastAnchor *AnchorStatus
+	Recovery   []string // what Open had to repair, also written as records
 }
 
 // Open opens or creates the log. It refuses to start if the records on disk
@@ -144,6 +149,9 @@ func Open(cfg Config) (*Log, error) {
 		if err := json.Unmarshal(b, &l.held); err != nil {
 			return nil, fmt.Errorf("evlog: witness-state.json: %w", err)
 		}
+	}
+	if err := l.loadAnchorState(); err != nil {
+		return nil, err
 	}
 	var err error
 	l.f, err = os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
@@ -413,7 +421,11 @@ func (l *Log) Checkpoint(ctx context.Context) ([]WitnessStatus, error) {
 			return status, err
 		}
 	}
-	b, _ := json.MarshalIndent(map[string]any{"checkpoint_size": c.Size, "witnesses": status}, "", "  ")
+	st := map[string]any{"checkpoint_size": c.Size, "witnesses": status}
+	if a := l.anchorRound(ctx, c); a != nil {
+		st["anchor"] = a
+	}
+	b, _ := json.MarshalIndent(st, "", "  ")
 	return status, writeAtomic(filepath.Join(l.cfg.PublicDir, "status.json"), b)
 }
 
@@ -461,15 +473,20 @@ func (l *Log) writeDescriptor() error {
 	for _, w := range l.cfg.Witnesses {
 		ws = append(ws, wd{w.Key.Name, w.Key.String(), w.URL, w.OperatorControlled})
 	}
-	b, err := json.MarshalIndent(map[string]any{
+	d := map[string]any{
 		"format":    Format,
 		"origin":    l.cfg.Signer.Name(),
 		"log_key":   l.cfg.VerifierKey,
 		"witnesses": ws,
 		"leaf":      "SHA-256(0x00 || records.jsonl line without its newline), RFC 6962 tree",
 		"data":      "plaintext; synthetic or explicitly authorised non-sensitive data only",
-		"notice":    "Informational. A verifier must take the log and witness keys from a trusted channel, not from this file.",
-	}, "", "  ")
+		"notice":    "Informational. A verifier must take the log, witness, Rekor and anchoring keys from a trusted channel, not from this file.",
+	}
+	if a := l.cfg.Anchor; a != nil {
+		d["anchor"] = map[string]any{"rekor": a.URL, "anchoring_key": anchorPublicKeyPEM(a.Key), "interval": a.Interval.String(),
+			"anchored": "SHA-256 of the checkpoint body (origin, size, root), as a hashedrekord entry"}
+	}
+	b, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		return err
 	}

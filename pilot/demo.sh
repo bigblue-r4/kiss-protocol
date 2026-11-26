@@ -92,6 +92,6 @@ kill "${PIDS[0]}" 2>/dev/null || true; sleep 4
 "$BIN/harborlight-verify" --source "http://127.0.0.1:$LPORT" --log-key "@$K/log.key.pub" --operator-witness-key "@$K/witness.pub" --max-age 3s | head -1 || true
 
 say "4. Adversarial regression suite"
-"$BIN/harborlight-adversarial" --json "$WORK/adversarial.json" | tail -1
+"$BIN/harborlight-adversarial" --json "$WORK/adversarial.json" | tail -2
 
 say "Done. Open $WORK/report.html"

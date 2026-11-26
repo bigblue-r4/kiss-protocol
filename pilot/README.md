@@ -55,7 +55,7 @@ docker compose -f pilot/compose.yaml down -v                # removes everything
 | `harborlight-log` | Puts each feed line, in plaintext, into an RFC 6962 SHA-256 Merkle log. Signs a C2SP checkpoint every interval and has it cosigned by the witness. Serves the public directory read-only on :8080 | built here |
 | `omniwitness` | A C2SP `tlog-witness`: it cosigns a checkpoint only if a consistency proof shows it extends the last one it cosigned | [transparency-dev/witness](https://github.com/transparency-dev/witness), unmodified, Apache-2.0 |
 | `harborlight-verify` | The standalone verifier. It needs the public directory and public keys only | built here |
-| `harborlight-adversarial` | 21 attacks, each with its expected verifier result | built here |
+| `harborlight-adversarial` | 29 attacks, each with its expected verifier result (2 are pinned known limits) | built here |
 
 ## Verify independently
 
@@ -86,6 +86,33 @@ harborlight-verify --source http://127.0.0.1:8080 \
 - The result still verifies, but it is labelled *witness NOT independent*.
 - A witness on the operator's host proves the protocol works. It gives no independence.
 
+## Optional: public anchoring in Rekor
+
+Off by default, and off in the demo. When on, the log also records each new checkpoint (at most once per `--anchor-interval`, default 1 hour) in a Rekor v1 transparency log such as the public Sigstore instance. This gives a third party's signed timestamp for the records, and it catches a rewrite even if the log operator and every witness collude.
+
+**An anchor is public and permanent.** It publishes the log's origin name, a tree size, a root and the anchoring public key; never record content. Pointing a real log at the public Rekor needs SGAIL leadership's approval.
+
+```sh
+harborlight-log anchor-keygen --out anchor.key          # ECDSA P-256; use it for nothing else
+harborlight-log run ... --rekor-url https://rekor.sigstore.dev --anchor-key anchor.key
+```
+
+The log writes `anchor.json` (the latest anchor) and keeps every anchor in `anchors/<size>.json`. A Rekor outage is logged and reported in `status.json`; it never stops logging or witnessing.
+
+To check anchors, pin Rekor's public key and the log's anchoring public key:
+
+```sh
+harborlight-verify ... --rekor-key rekor.pub --anchor-key anchor.key.pub              # offline: the latest anchor
+harborlight-verify ... --rekor-key rekor.pub --anchor-key anchor.key.pub \
+  --rekor-url https://rekor.sigstore.dev                                              # online: every anchor
+```
+
+- **Offline** checks Rekor's signed entry timestamp, inclusion proof and signed checkpoint, then recomputes the anchored root from the records.
+- **Online** also asks Rekor for every entry made with the anchoring key, verifies each, and fails if any of them matches no prefix of the records. Use it: an operator holding the anchoring key could anchor a rewrite again, and only the earlier anchors in Rekor show that.
+- Take Rekor's key from Sigstore's signed trust root (or `GET /api/v1/log/publicKey` once, kept), not from the log's files.
+
+Uploading to a real Rekor has not been run yet. The offline checks are tested against a real entry from the public Sigstore Rekor; the upload and search code is tested against an in-process stand-in. Limits: [`THREAT-MODEL.md`](../docs/stage2/THREAT-MODEL.md) §3 item 12.
+
 ## What the evidence looks like
 
 `curl http://127.0.0.1:8080/checkpoint` returns a [C2SP checkpoint](https://c2sp.org/tlog-checkpoint):
@@ -103,7 +130,7 @@ Example output from a real run is in [`docs/stage2/example-evaluation/`](../docs
 harborlight-adversarial            # or: go test ./internal/pilot/... ./pkg/tlog ./pkg/checkpoint
 ```
 
-Every case states its attack and expected result. The suite exits 0 only if all 21 match.
+Every case states its attack and expected result. The suite exits 0 only if all 29 match. Two cases are **known limits**: attacks the pilot does not stop under the stated conditions (collusion without Rekor pins; a re-anchored rewrite checked offline). They pin the disclosed behaviour; they do not mean the attack is stopped.
 
 The interop test against a real omniwitness needs two environment variables:
 

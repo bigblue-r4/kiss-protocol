@@ -1,6 +1,6 @@
 # Stage 2 pilot: threat model, security limitations and trust boundaries
 
-2026-11-25. Scope: the pilot components (`harborlight-cf-adapter`, `harborlight-log`, `omniwitness`, `harborlight-verify`).
+2026-11-25; Rekor anchoring added 2026-11-26. Scope: the pilot components (`harborlight-cf-adapter`, `harborlight-log`, `omniwitness`, `harborlight-verify`), and the optional anchoring in a Rekor v1 log.
 
 The existing Witness host-integrity product and its threat model ([`THREAT_MODEL.md`](../../THREAT_MODEL.md)) are unchanged and out of scope here.
 
@@ -14,6 +14,10 @@ The existing Witness host-integrity product and its threat model ([`THREAT_MODEL
    - With `--state`, an evaluator who saw the earlier history gets `FAILED`.
 3. **Fail-loud verification.** A missing input, an absent or stale witness, or an unmet quorum gives `UNVERIFIABLE`, never `VERIFIED`.
 4. **Shadow mode.** The adapter only receives copies of telemetry. It has no credential for, and no path back to, the source.
+5. **Optional public anchoring (off by default).** With Rekor anchoring on and the Rekor and anchoring keys pinned by the evaluator:
+   - a rewrite of records that were anchored gives `FAILED`, even if the log key and every witness collude (offline check of the latest anchor);
+   - with `--rekor-url`, the verifier also searches Rekor for every anchor made with the anchoring key, so a rewrite that the colluders anchored again still gives `FAILED`;
+   - each verified anchor shows, from Rekor's signed entry timestamp, the time by which the anchored records existed in exactly that form.
 
 It claims **nothing else**. In particular, it makes:
 - no certification claim;
@@ -37,6 +41,7 @@ It claims **nothing else**. In particular, it makes:
 | Log → witness | tlog-witness `add-checkpoint` | The checkpoint signature and an RFC 6962 consistency proof. The witness persists its state before it cosigns |
 | Log → evaluator | The public directory over HTTP, or a copy | Nothing is trusted from the channel. Everything is checked against keys the evaluator pinned |
 | Evaluator's state | `--state` file | Kept by the evaluator. If they lose it, they lose rollback detection for their next run |
+| Log → Rekor (optional) | A `hashedrekord` entry: the SHA-256 of the checkpoint body, signed with a dedicated ECDSA P-256 anchoring key | Rekor checks the signature and returns a signed entry timestamp, an inclusion proof and a signed checkpoint. The evaluator checks all three against the pinned Rekor key, offline. The entry is public and permanent |
 
 ## 2. Attacks, and what the verifier says
 
@@ -58,6 +63,16 @@ Every row is a case in `harborlight-adversarial` (also run by `go test`).
 | A17 | Torn write (power cut) | VERIFIED, with a log notice | The partial line is quarantined, kept, and recorded as a `recovery` record |
 | A19 | Flood of garbage and oversized lines | VERIFIED, with rejected counts | Rejected lines are kept as hashes only |
 | A20, A21 | Inputs unreachable or withheld | UNVERIFIABLE | |
+| A22 | None, with Rekor anchoring and pins, every anchor checked online | VERIFIED | |
+| A23 | **Known limit.** The log operator and the witness collude to rewrite a record; a first-time evaluator without the Rekor pins | VERIFIED | Nothing the evaluator holds contradicts it. This is §3 item 1, pinned as a test so it stays disclosed |
+| A24 | The same collusion; the evaluator pins the Rekor keys | FAILED | The latest anchor's root does not match the rewritten records |
+| A25 | **Known limit.** The colluders also anchor the rewrite with the real anchoring key; offline check | VERIFIED | An offline check sees only the latest anchor. The report says so |
+| A26 | The same re-anchored rewrite; the evaluator passes `--rekor-url` | FAILED | Rekor still holds the honest anchor, which matches no prefix of the rewritten records |
+| A27 | Forged anchor (signed entry timestamp altered) | FAILED | |
+| A28 | Anchor withheld from an evaluator who pinned the Rekor keys | UNVERIFIABLE | |
+| A29 | Rekor unreachable during the online search | UNVERIFIABLE | |
+
+The Rekor cases run against an in-process stand-in for Rekor, not the public service. The offline checks are also tested against an entry fetched from the public Sigstore Rekor (`internal/pilot/rekor/testdata`). Uploading to a real Rekor has not been run: it would create a permanent public record and needs approval.
 
 The adapter's own tests add:
 - unauthenticated and wrong-token uploads: 401;
@@ -72,6 +87,7 @@ The adapter's own tests add:
    - What stops a quietly rewritten history being accepted is only the witness quorum together with the evaluator's state.
    - **The operator plus the quorum's witnesses colluding** could still show different histories.
    - The report states the quorum.
+   - Rekor anchoring, when on and pinned, removes this for records that were anchored (A24, A26). Records newer than the latest anchor rely on the witnesses alone.
 2. **The demo witness runs on the operator's host.**
    - It shows the protocol works; it gives **no independence**.
    - The verifier labels such a result *witness NOT independent* when the witness is pinned with `--operator-witness-key`.
@@ -102,7 +118,14 @@ The adapter's own tests add:
     - The verifier downloads every record.
     - Measured: about 16–18 s of CPU and under 180 MiB peak memory per million records, for each of the two ([BENCHMARKS-AND-COST.md](BENCHMARKS-AND-COST.md)).
     - Comfortable to roughly 10⁷ records. Beyond that, a tiled log (Tessera) is the planned path (DEFER).
-12. **Out of scope.**
+12. **Rekor anchoring (optional).**
+    - **Public and permanent.** Each anchor publishes, for good, the log's origin name, a tree size, a root and the anchoring public key. It publishes no record content. Turning it on against the public Sigstore Rekor is a decision for SGAIL leadership.
+    - **Trust in Rekor.** An anchor is as good as Rekor's key and Rekor's append-only operation. The verifier checks Rekor's signatures and inclusion proof, but not Rekor's own consistency over time (that needs Rekor's witnesses or monitors).
+    - **The search index is not signed.** `--rekor-url` verifies every entry Rekor's index returns, but an index that omits an entry is not detectable. A missing honest anchor is not proof of honesty.
+    - **The anchoring key is on the log host.** Root on that host can anchor a rewrite (A25). That is why the online search exists, and why the key is used for nothing else.
+    - **Gaps.** Anchors are made at most once per `--anchor-interval` (default 1 hour), and only when the size changed.
+    - **Rekor v1.** The public instance's v1 API is in maintenance mode. Rekor v2 has no signed entry timestamp and needs an RFC 3161 timestamp authority instead; it is not supported yet (DEFER).
+13. **Out of scope.**
     - Hardware key custody (HSM or PIV) and TEE attestation.
     - An inline control on traffic.
     - Per-source origin signatures.
