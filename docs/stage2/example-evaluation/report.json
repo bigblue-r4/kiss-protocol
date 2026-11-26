@@ -1,0 +1,91 @@
+{
+  "result": "VERIFIED",
+  "summary": "2251 records of pilot.example/demo-log verified against a pinned log key and witness quorum (witness NOT independent)",
+  "checks": [
+    {
+      "id": "checkpoint.log_signature",
+      "title": "Checkpoint signed by the pinned log key",
+      "status": "VERIFIED",
+      "detail": "pilot.example/demo-log, size 2251"
+    },
+    {
+      "id": "witness.quorum",
+      "title": "Witness quorum (1 of 1 pinned witnesses, fresh within 5m0s)",
+      "status": "VERIFIED",
+      "detail": "1 fresh valid cosignature(s); newest 2026-11-25T22:12:23Z",
+      "warning": "The quorum is met only with witnesses marked as run by the log operator. This demonstrates the protocol; it gives no independence, and the operator could show different histories to different verifiers."
+    },
+    {
+      "id": "records.root",
+      "title": "Records reproduce the checkpoint root",
+      "status": "VERIFIED",
+      "detail": "2251 records hash to the signed root"
+    },
+    {
+      "id": "history.prior",
+      "title": "Consistent with this evaluator's previous verification",
+      "status": "VERIFIED",
+      "detail": "no state file yet: this run creates it",
+      "warning": "First run: no earlier checkpoint to compare with."
+    },
+    {
+      "id": "completeness",
+      "title": "Completeness indicators (disclosed, not proven)",
+      "status": "VERIFIED",
+      "detail": "2251 events, 0 rejected lines, 9 batches; 0 incomplete batches, 1 duplicate-delivery findings, 0 sequence gaps, 0 repeats; 0 records after the checkpoint not yet covered",
+      "warning": "The log is intact, but its input shows gaps, repeats, rejected lines or log notices. See the completeness section."
+    }
+  ],
+  "origin": "pilot.example/demo-log",
+  "checkpoint_size": 2251,
+  "checkpoint_root": "1482e4bdae93de98d1ccffe14d5eef43b17bd8c797dcd30f184f90524b25982b",
+  "witnesses": [
+    {
+      "name": "pilot.example/demo-witness",
+      "key": "pilot.example/demo-witness+f4f44d8d+BFgou4sJbgOOXKIyPl90RGDSWDTF+k6W2DDqF/lDUY8H",
+      "operator_controlled": true,
+      "present": true,
+      "valid": true,
+      "fresh": true,
+      "timestamp": "2026-11-25T22:12:23Z"
+    }
+  ],
+  "completeness": {
+    "events": 2251,
+    "rejected_lines": 0,
+    "events_by_source": {
+      "cf-logpush": 2251
+    },
+    "batches": 9,
+    "duplicate_batch_entries": [
+      "batch a74bd588de0d3518c0da66709506bd9e: all 250 entries recorded 2 times (the whole batch was delivered again)"
+    ],
+    "records_after_checkpoint": 0
+  },
+  "disclosures": [
+    "Completeness: the log proves that what it received is unaltered. It cannot prove that it received everything the source emitted.",
+    "Truth of content: a record proves only that the log received this payload, not that the event it describes happened.",
+    "Operator: the log operator holds the log signing key. Witnesses stop the operator from showing different histories to different verifiers only up to the witness quorum: the operator plus that many colluding witnesses could still do so.",
+    "Time: record times are the log host's clock. A cosignature timestamp bounds when a checkpoint existed, not when an event happened.",
+    "Keys: the pilot uses software keys on the log host; anyone with root there can sign as the log. Hardware key custody is not part of the pilot.",
+    "Scope: this is a pilot evaluation, not a certification. It makes no Proof-of-Control Tier 3 or Tier 4 claim and no production security guarantee.",
+    "THIS RUN: witness quorum met only by operator-controlled witnesses (no independence)."
+  ],
+  "manifest": {
+    "source": "http://127.0.0.1:18080",
+    "verified_at": "2026-11-25T22:12:23Z",
+    "verifier": "harborlight-verify v1.0.1-0.20261125221212-ab49642f1006 ab49642f10060abee3734ae56dc410b0b50496f0",
+    "pinned_log_key": "pilot.example/demo-log+7f4f60e4+Ab/pTn4i5F3MEXc6uakdLLkNNrLe3/IF+c1JOofvck0B",
+    "pinned_witness_keys": [
+      "pilot.example/demo-witness+f4f44d8d+BFgou4sJbgOOXKIyPl90RGDSWDTF+k6W2DDqF/lDUY8H"
+    ],
+    "quorum": 1,
+    "max_checkpoint_age": "5m0s",
+    "prior_state": "<workdir>/evaluator-state.json",
+    "input_sha256": {
+      "checkpoint": "b8e0e0c6bffe28e168b48dbe40fbee7676a654c909eb451e7031495988063dff",
+      "records.jsonl": "83c91708027051e9e3221dcc14ee4a675f0d8ba6d65ad02520070150603d3db7"
+    },
+    "checkpoint_note": "pilot.example/demo-log\n2251\nFILkva6T3pjRzP/hTV7vQ7F72MeX3NMPGE+QUkslmCs=\n\n— pilot.example/demo-log f09g5GtLWxuGARYeezil1HX56MGzlNjdLSzszspTkUPhsma1wmw+S8iz7ygZzoTEhOJ8OA/lPIV/gLoEtT3ahp886wU=\n— pilot.example/demo-witness 9PRNjQAAAABrB11HK2f2F0F1GELMP0QaphExFv/SAGvqgiJHy2g2xEcH8ZE42lg2YW1/3a2WG8nh9KuM/mEgDCWN5z6MeJ9M4zBiCA==\n"
+  }
+}

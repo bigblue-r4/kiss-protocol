@@ -7,6 +7,15 @@ All notable changes to Harborlight / kiss-protocol are documented here.
 ## [Unreleased]
 
 ### Added
+- **Stage 2 pilot (new, separate from the Witness log): witnessed, independently verifiable evidence for shadow-mode telemetry.** Synthetic or explicitly authorised non-sensitive data only; no certification or Proof-of-Control Tier 3/4 claim. See `pilot/README.md` and `docs/stage2/`.
+  - `pkg/tlog`: RFC 6962 SHA-256 tree with inclusion and consistency proofs, cross-checked against `golang.org/x/mod/sumdb/tlog`.
+  - `pkg/checkpoint`: C2SP checkpoints, `cosignature/v1` and a `tlog-witness` client; tested against an unmodified `transparency-dev/witness` omniwitness.
+  - `harborlight-log`: plaintext records in a SHA-256 log, signed checkpoints cosigned by witnesses, torn-write quarantine, and a refusal to start over altered or lost evidence.
+  - `harborlight-verify`: the standalone verifier (public material and pinned keys only), with results `VERIFIED`, `FAILED` or `UNVERIFIABLE` (a stale or absent witness is never a pass), `--state` rollback detection, and HTML and JSON reports.
+  - `harborlight-cf-adapter`: a Cloudflare Logpush HTTP-destination sink built from the public documentation, plus a synthetic `ai_gateway_events` generator.
+  - `harborlight-adversarial`: 21 attack cases.
+  - `pilot/demo.sh`, `pilot/compose.yaml`, `pilot/bench.sh`.
+  - New dependency: `golang.org/x/mod`. The Witness log, its formats and the release binaries are unchanged.
 - **Merkle consistency proofs** (RFC 6962 §2.1.2, verified per RFC 9162 §2.1.4.2): `witness prove-consistency` (from the local log, or from a copy of the leaf feed with no keys) and `witness verify-consistency`, which checks off-host, with two signed heads, the proof and the signer's public key, that the newer head extends the older one. A rewritten or rolled-back history fails, even if it was re-signed with the witness key. Cross-checked against `transparency-dev/merkle` for every tree size up to 130 (as a test oracle only; not a dependency). Two new fuzz targets. See `docs/mirror-setup.md`. No log or head format change.
 - **`pkg/pocverify` and `poc-verify`: a clean-room Proof-of-Control evidence verifier** (Go standard library only), written from the PoC Working Draft v0.1 schema documents at `54a7bc6` without reading upstream's validator or reference implementation.
   - Strict parser (duplicate keys rejected), full RFC 8785 canonicalization, Ed25519, and a leaf-to-root binding check.
