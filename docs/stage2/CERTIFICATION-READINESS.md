@@ -24,7 +24,7 @@ Statuses in the "Phase 1" column are copied from `docs/poc/conformance-matrix.md
 1. **Conformance statement (WP-0).**
    - The draft is local, on branch `docs/poc-wp0-statement-draft`.
    - It needs decisions on deployment and environment, retention, date and claims reviewer, and on whether to publish.
-   - It also needs the C07 errata.
+   - The C07 errata are published separately: `docs/CONFORMANCE_C07-ERRATA.md`.
 2. **The C4 gate in force.** Documents alone place no domain; C4 stays unclaimable until the gate is deployed. Leadership expects this to be the largest hurdle.
 3. **Key custody.** HSM or PIV custody is needed for anything beyond pilot grade (DEFER).
 4. **An independent witness in production**, with a quorum above 1.
@@ -35,6 +35,6 @@ Statuses in the "Phase 1" column are copied from `docs/poc/conformance-matrix.md
 
 1. Merge the pilot. Run the Compose path on a Docker host, and sign the pilot binaries in the release workflow.
 2. With approval, enrol one independent witness and run a pilot with an outside evaluator.
-3. WP-0 statement decisions, and the C07 errata (needs leadership approval: it is a public document).
+3. WP-0 statement decisions. (The C07 errata are published: `docs/CONFORMANCE_C07-ERRATA.md`.)
 4. WP-3: a co-signer for the BLAKE3 Witness log, or migrating it to the SHA-256 path.
 5. Then reassess Tier 3 against the Phase 1 gap matrix. The Phase 1 estimate of 21–37 engineer-weeks for full Tier 3 is reduced by about the work above, but has not been re-estimated.
