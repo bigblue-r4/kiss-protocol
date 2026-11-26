@@ -10,6 +10,8 @@ package adversarial
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
@@ -19,6 +21,8 @@ import (
 	"time"
 
 	"github.com/bigblue-r4/kiss-protocol/internal/pilot/evlog"
+	"github.com/bigblue-r4/kiss-protocol/internal/pilot/rekor"
+	"github.com/bigblue-r4/kiss-protocol/internal/pilot/rekor/rekortest"
 	"github.com/bigblue-r4/kiss-protocol/internal/pilot/testwitness"
 	"github.com/bigblue-r4/kiss-protocol/internal/pilot/verify"
 	"github.com/bigblue-r4/kiss-protocol/pkg/checkpoint"
@@ -33,16 +37,21 @@ type Case struct {
 	ID, Attack, Expect string
 	Run                func(e *Env) (*verify.Result, error)
 	ExpectStatus       verify.Status
+	// KnownLimit marks an attack the pilot does not stop under the stated
+	// conditions. The case pins that behaviour so it stays documented; it
+	// passes when the verifier behaves as disclosed, not when it is safe.
+	KnownLimit bool
 }
 
 // Outcome is a case's result.
 type Outcome struct {
-	ID      string        `json:"id"`
-	Attack  string        `json:"attack"`
-	Expect  verify.Status `json:"expected"`
-	Got     verify.Status `json:"got"`
-	Pass    bool          `json:"pass"`
-	Summary string        `json:"verifier_summary"`
+	ID         string        `json:"id"`
+	Attack     string        `json:"attack"`
+	Expect     verify.Status `json:"expected"`
+	Got        verify.Status `json:"got"`
+	Pass       bool          `json:"pass"`
+	KnownLimit bool          `json:"known_limit,omitempty"`
+	Summary    string        `json:"verifier_summary"`
 }
 
 // Env is a fresh honest deployment for one case.
@@ -52,6 +61,9 @@ type Env struct {
 	VKey    string
 	Witness *testwitness.Witness
 	srv     *httptest.Server
+	Rekor   *rekortest.Server
+	rekor   *httptest.Server
+	Anchor  *ecdsa.PrivateKey
 	Log     *evlog.Log
 	cfg     evlog.Config
 	State   string
@@ -70,8 +82,20 @@ func newEnv(dir string) (*Env, error) {
 	w := testwitness.New("pilot.example/adversarial-witness")
 	w.AddLog(origin, vkey)
 	e := &Env{Dir: dir, Signer: signer, VKey: vkey, Witness: w, srv: httptest.NewServer(w), State: filepath.Join(dir, "evaluator-state.json"), Now: time.Now()}
+	// Every environment anchors in an in-process Rekor stand-in; the
+	// verifier checks anchors only in the cases that pin the Rekor keys.
+	e.Rekor = rekortest.New()
+	e.rekor = httptest.NewServer(e.Rekor)
+	priv, _, err := rekor.GenerateKey()
+	if err != nil {
+		return nil, err
+	}
+	if e.Anchor, err = rekor.ParsePrivateKey(priv); err != nil {
+		return nil, err
+	}
 	e.cfg = evlog.Config{DataDir: filepath.Join(dir, "data"), PublicDir: filepath.Join(dir, "public"), Signer: signer, VerifierKey: vkey,
-		Witnesses: []evlog.Witness{{URL: e.srv.URL, Key: w.Key()}}}
+		Witnesses: []evlog.Witness{{URL: e.srv.URL, Key: w.Key()}},
+		Anchor:    &evlog.AnchorConfig{URL: e.rekor.URL, Key: e.Anchor}}
 	e.Log, err = evlog.Open(e.cfg)
 	if err != nil {
 		return nil, err
@@ -84,6 +108,60 @@ func (e *Env) close() {
 		e.Log.Close()
 	}
 	e.srv.Close()
+	e.rekor.Close()
+}
+
+// pinRekor pins the Rekor and anchoring keys; online also searches Rekor.
+func (e *Env) pinRekor(online bool) func(*verify.Options) {
+	return func(o *verify.Options) {
+		o.RekorKey, o.AnchorKey = e.Rekor.Public(), &e.Anchor.PublicKey
+		if online {
+			o.RekorURL = e.rekor.URL
+		}
+	}
+}
+
+// collude rewrites record 3 in a copy of the public directory, re-signs it
+// with the real log key, and cosigns it with the witness's own private key:
+// the log operator and the witness acting together. With reanchor, the
+// rewritten checkpoint is also anchored in Rekor with the real anchoring
+// key and anchor.json is replaced.
+func (e *Env) collude(reanchor bool) (string, error) {
+	d, err := e.editRecords(func(l [][]byte) [][]byte {
+		l[3] = bytes.Replace(l[3], []byte(`"allow"`), []byte(`"block"`), 1)
+		return l
+	})
+	if err != nil {
+		return "", err
+	}
+	ls, err := lines(d)
+	if err != nil {
+		return "", err
+	}
+	var leaves []tlog.Hash
+	for _, l := range ls {
+		leaves = append(leaves, tlog.HashLeaf(bytes.TrimSuffix(l, []byte("\n"))))
+	}
+	c := checkpoint.Checkpoint{Origin: origin, Size: uint64(len(leaves)), Root: tlog.Root(leaves)}
+	raw, err := checkpoint.SignLog(c, e.Signer)
+	if err != nil {
+		return "", err
+	}
+	raw = append(raw, checkpoint.Cosign(e.Witness.Key().Name, e.Witness.PrivateKey(), c.Text(), uint64(e.Now.Unix())).String()...)
+	if err := os.WriteFile(filepath.Join(d, "checkpoint"), raw, 0o644); err != nil {
+		return "", err
+	}
+	if reanchor {
+		uuid, entry, err := rekor.Upload(context.Background(), nil, e.rekor.URL, rekor.Digest(c.Text()), e.Anchor)
+		if err != nil {
+			return "", err
+		}
+		b, _ := json.Marshal(rekor.Anchor{Format: rekor.AnchorFormat, Size: c.Size, Rekor: e.rekor.URL, UUID: uuid, Entry: entry})
+		if err := os.WriteFile(filepath.Join(d, "anchor.json"), b, 0o644); err != nil {
+			return "", err
+		}
+	}
+	return d, nil
 }
 
 // Grow appends n synthetic events and checkpoints.
@@ -369,6 +447,80 @@ func Cases() []Case {
 			}
 			return e.Verify(d, nil), nil
 		}},
+		{ID: "A22-anchored-baseline", Attack: "none: honest log, Rekor keys pinned, every anchor checked online", ExpectStatus: verify.Verified, Run: func(e *Env) (*verify.Result, error) {
+			r := e.Verify(e.Public(), e.pinRekor(true))
+			if r.Anchor == nil || r.Anchor.Size != 20 {
+				r.Overall, r.Summary = "NO-ANCHOR", "the honest anchor was not reported"
+			}
+			return r, nil
+		}},
+		{ID: "A23-collusion-without-anchor", KnownLimit: true, Attack: "KNOWN LIMIT: log operator and witness collude to rewrite a record; a first-time evaluator without the Rekor pins accepts it", ExpectStatus: verify.Verified, Run: func(e *Env) (*verify.Result, error) {
+			d, err := e.collude(false)
+			if err != nil {
+				return nil, err
+			}
+			return e.Verify(d, func(o *verify.Options) { o.StatePath = "" }), nil
+		}},
+		{ID: "A24-collusion-anchor-offline", Attack: "the same collusion; the evaluator pins the Rekor keys (offline check of the latest anchor)", ExpectStatus: verify.Failed, Run: func(e *Env) (*verify.Result, error) {
+			d, err := e.collude(false)
+			if err != nil {
+				return nil, err
+			}
+			return e.Verify(d, func(o *verify.Options) { o.StatePath = ""; e.pinRekor(false)(o) }), nil
+		}},
+		{ID: "A25-collusion-reanchor-offline", KnownLimit: true, Attack: "KNOWN LIMIT: the colluders also anchor the rewrite in Rekor with the real anchoring key; an offline check sees only the new anchor", ExpectStatus: verify.Verified, Run: func(e *Env) (*verify.Result, error) {
+			d, err := e.collude(true)
+			if err != nil {
+				return nil, err
+			}
+			return e.Verify(d, func(o *verify.Options) { o.StatePath = ""; e.pinRekor(false)(o) }), nil
+		}},
+		{ID: "A26-collusion-reanchor-online", Attack: "the same re-anchored rewrite; the evaluator searches Rekor for every anchor by the anchoring key", ExpectStatus: verify.Failed, Run: func(e *Env) (*verify.Result, error) {
+			d, err := e.collude(true)
+			if err != nil {
+				return nil, err
+			}
+			return e.Verify(d, func(o *verify.Options) { o.StatePath = ""; e.pinRekor(true)(o) }), nil
+		}},
+		{ID: "A27-forged-anchor", Attack: "corrupt Rekor's signed entry timestamp in anchor.json", ExpectStatus: verify.Failed, Run: func(e *Env) (*verify.Result, error) {
+			d, err := e.Copy()
+			if err != nil {
+				return nil, err
+			}
+			p := filepath.Join(d, "anchor.json")
+			var a rekor.Anchor
+			b, _ := os.ReadFile(p)
+			if err := json.Unmarshal(b, &a); err != nil {
+				return nil, err
+			}
+			var en rekor.Entry
+			if err := json.Unmarshal(a.Entry, &en); err != nil {
+				return nil, err
+			}
+			set, _ := base64.StdEncoding.DecodeString(en.Verification.SignedEntryTimestamp)
+			set[len(set)-1] ^= 1
+			en.Verification.SignedEntryTimestamp = base64.StdEncoding.EncodeToString(set)
+			a.Entry, _ = json.Marshal(en)
+			b, _ = json.Marshal(a)
+			if err := os.WriteFile(p, b, 0o644); err != nil {
+				return nil, err
+			}
+			return e.Verify(d, e.pinRekor(false)), nil
+		}},
+		{ID: "A28-anchor-withheld", Attack: "anchor.json withheld from an evaluator who pinned the Rekor keys", ExpectStatus: verify.Unverifiable, Run: func(e *Env) (*verify.Result, error) {
+			d, err := e.Copy()
+			if err != nil {
+				return nil, err
+			}
+			if err := os.Remove(filepath.Join(d, "anchor.json")); err != nil {
+				return nil, err
+			}
+			return e.Verify(d, e.pinRekor(false)), nil
+		}},
+		{ID: "A29-rekor-unreachable", Attack: "Rekor is down when the evaluator searches it", ExpectStatus: verify.Unverifiable, Run: func(e *Env) (*verify.Result, error) {
+			e.Rekor.Down = true
+			return e.Verify(e.Public(), e.pinRekor(true)), nil
+		}},
 	}
 }
 
@@ -393,7 +545,7 @@ func Run(dir string) ([]Outcome, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", c.ID, err)
 		}
-		out = append(out, Outcome{ID: c.ID, Attack: c.Attack, Expect: c.ExpectStatus, Got: r.Overall, Pass: r.Overall == c.ExpectStatus, Summary: r.Summary})
+		out = append(out, Outcome{ID: c.ID, Attack: c.Attack, Expect: c.ExpectStatus, Got: r.Overall, Pass: r.Overall == c.ExpectStatus, KnownLimit: c.KnownLimit, Summary: r.Summary})
 	}
 	return out, nil
 }

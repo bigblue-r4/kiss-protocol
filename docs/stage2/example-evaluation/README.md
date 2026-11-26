@@ -1,12 +1,12 @@
 # Example evaluation (synthetic data)
 
-This is the output of one real run of `pilot/demo.sh` on 2026-11-25, on a development workstation. Local paths are replaced by `<workdir>`.
+This is the output of one real run of `pilot/demo.sh` on 2026-11-26, on a development workstation. Local paths are replaced by `<workdir>`.
 
 | File | What it is |
 |---|---|
 | [`report.html`](report.html) | The verifier's single-file report: result, checks, witness table, completeness, disclosures, run manifest. It has no scripts and opens offline |
 | [`report.json`](report.json) | The same result as JSON |
-| [`adversarial.json`](adversarial.json) | The 21 adversarial cases: each attack, its expected result and the result it got |
+| [`adversarial.json`](adversarial.json) | The 29 adversarial cases: each attack, its expected result and the result it got (2 are pinned known limits) |
 | [`demo-output.txt`](demo-output.txt) | The terminal output of the four demonstration steps |
 
 ## What the run shows
@@ -19,7 +19,7 @@ This is the output of one real run of `pilot/demo.sh` on 2026-11-25, on a develo
 2. **The redelivered batch is visible:** "all 250 entries recorded 2 times (the whole batch was delivered again)". The log is intact; the input was not clean.
 3. **FAILED** on a copy with one record changed.
 4. **UNVERIFIABLE** once the witness was stopped and its last cosignature became older than the freshness bound.
-5. **21 of 21** adversarial cases matched.
+5. **29 of 29** adversarial cases matched. Two are known limits, matched because the verifier behaves as disclosed (see `THREAT-MODEL.md`). The demo does not turn on Rekor anchoring; cases A22–A29 cover it against an in-process stand-in for Rekor.
 
 ## Reproduce
 

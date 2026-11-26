@@ -7,6 +7,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/ecdsa"
 	"flag"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bigblue-r4/kiss-protocol/internal/pilot/rekor"
 	"github.com/bigblue-r4/kiss-protocol/internal/pilot/verify"
 	"github.com/bigblue-r4/kiss-protocol/pkg/checkpoint"
 )
@@ -30,6 +32,12 @@ const usageText = `usage: harborlight-verify --source DIR|URL --log-key VKEY|@FI
                           [--operator-witness-key VKEY|@FILE]...
                           [--quorum N] [--max-age 10m] [--state FILE]
                           [--operator-witness NAME]... [--report FILE.html] [--json FILE]
+                          [--rekor-key FILE.pem --anchor-key FILE.pem [--rekor-url URL]]
+
+With --rekor-key and --anchor-key (PEM public keys: the Rekor log's, and the
+log's anchoring key), the log's latest Rekor anchor must exist and match the
+records. That check is offline. Add --rekor-url URL to also search that Rekor
+for every anchor made with the anchoring key and check each one (online).
 
 Keys must come from a channel you trust, never from the log's own files.
 Exit status: 0 VERIFIED, 1 FAILED, 3 UNVERIFIABLE, 2 usage.
@@ -46,6 +54,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	state := fs.String("state", "", "file holding the last checkpoint you verified (rollback and rewrite detection)")
 	report := fs.String("report", "", "write an HTML report here")
 	jsonOut := fs.String("json", "", "write the JSON result here")
+	rekorKey := fs.String("rekor-key", "", "pinned Rekor log public key (PEM file)")
+	anchorKey := fs.String("anchor-key", "", "pinned anchoring public key of this log (PEM file)")
+	rekorURL := fs.String("rekor-url", "", "with the Rekor pins: search this Rekor for every anchor (online)")
 	var wkeys, opKeys, opRun multi
 	fs.Var(&wkeys, "witness-key", "pinned witness verifier key, or @file (repeatable)")
 	fs.Var(&opKeys, "operator-witness-key", "like --witness-key, for a witness run by the log operator (disclosed as not independent)")
@@ -88,6 +99,30 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	for _, n := range opRun {
 		o.OperatorControlled[n] = true
+	}
+	if (*rekorKey == "") != (*anchorKey == "") {
+		fmt.Fprintln(stderr, "--rekor-key and --anchor-key go together")
+		return 2
+	}
+	if *rekorURL != "" && *rekorKey == "" {
+		fmt.Fprintln(stderr, "--rekor-url needs --rekor-key and --anchor-key")
+		return 2
+	}
+	o.RekorURL = *rekorURL
+	if *rekorKey != "" {
+		for _, p := range []struct {
+			flag, path string
+			dst        **ecdsa.PublicKey
+		}{{"--rekor-key", *rekorKey, &o.RekorKey}, {"--anchor-key", *anchorKey, &o.AnchorKey}} {
+			b, err := os.ReadFile(p.path)
+			if err == nil {
+				*p.dst, err = rekor.ParsePublicKey(b)
+			}
+			if err != nil {
+				fmt.Fprintln(stderr, p.flag+":", err)
+				return 2
+			}
+		}
 	}
 	r := verify.Run(context.Background(), o)
 	fmt.Fprintf(stdout, "%s: %s\n", r.Overall, r.Summary)

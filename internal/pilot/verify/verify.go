@@ -17,6 +17,7 @@ package verify
 import (
 	"bufio"
 	"context"
+	"crypto/ecdsa"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -61,6 +62,12 @@ type Options struct {
 	Now                func() time.Time
 	HTTP               *http.Client
 	MaxBytes           int64 // bound on records.jsonl
+	// RekorKey and AnchorKey pin a Rekor log and the log's anchoring key.
+	// Both set: the latest anchor must exist and match the records.
+	RekorKey, AnchorKey *ecdsa.PublicKey
+	// RekorURL, if set with the pins, also searches that Rekor (online) for
+	// every anchor made with AnchorKey and checks each against the records.
+	RekorURL string
 }
 
 // Check is one line of the result.
@@ -108,6 +115,7 @@ type Result struct {
 	Size         uint64          `json:"checkpoint_size"`
 	Root         string          `json:"checkpoint_root,omitempty"`
 	Witnesses    []WitnessResult `json:"witnesses"`
+	Anchor       *AnchorResult   `json:"anchor,omitempty"`
 	Completeness Completeness    `json:"completeness"`
 	Disclosures  []string        `json:"disclosures"`
 	Manifest     Manifest        `json:"manifest"`
@@ -208,10 +216,13 @@ func Run(ctx context.Context, o Options) *Result {
 		return r
 	}
 
-	// 4. Consistency with what this evaluator verified before.
+	// 4. Rekor anchor, if pinned.
+	r.anchor(ctx, o, c, scan.leaves)
+
+	// 5. Consistency with what this evaluator verified before.
 	r.prior(o, c, scan.leaves)
 
-	// 5. Completeness (disclosed, never part of the pass/fail).
+	// 6. Completeness (disclosed, never part of the pass/fail).
 	r.completeness(scan.acc, uint64(len(scan.leaves))-c.Size)
 
 	if o.StatePath != "" && r.overall() == Verified {

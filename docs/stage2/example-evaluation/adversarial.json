@@ -69,7 +69,7 @@
     "expected": "FAILED",
     "got": "FAILED",
     "pass": true,
-    "verifier_summary": "Consistent with this evaluator's previous verification: history rewritten: the first 20 records no longer match the root verified on 2026-11-25T22:12:27Z"
+    "verifier_summary": "Consistent with this evaluator's previous verification: history rewritten: the first 20 records no longer match the root verified on 2026-11-26T19:15:18Z"
   },
   {
     "id": "A10-split-view",
@@ -85,7 +85,7 @@
     "expected": "FAILED",
     "got": "FAILED",
     "pass": true,
-    "verifier_summary": "Consistent with this evaluator's previous verification: rollback: this evaluator verified size 25 on 2026-11-25T22:12:27Z; the log now shows 20"
+    "verifier_summary": "Consistent with this evaluator's previous verification: rollback: this evaluator verified size 25 on 2026-11-26T19:15:18Z; the log now shows 20"
   },
   {
     "id": "A12-stale-witness",
@@ -165,6 +165,72 @@
     "expected": "UNVERIFIABLE",
     "got": "UNVERIFIABLE",
     "pass": true,
-    "verifier_summary": "Records available: open <tmp>/A21-records-withheld/attacked-copy/records.jsonl: no such file or directory"
+    "verifier_summary": "Records available: open <tmp>/A21-records-withheld/attacked-1795720519226074478/records.jsonl: no such file or directory"
+  },
+  {
+    "id": "A22-anchored-baseline",
+    "attack": "none: honest log, Rekor keys pinned, every anchor checked online",
+    "expected": "VERIFIED",
+    "got": "VERIFIED",
+    "pass": true,
+    "verifier_summary": "20 records of pilot.example/adversarial-log verified against a pinned log key and witness quorum"
+  },
+  {
+    "id": "A23-collusion-without-anchor",
+    "attack": "KNOWN LIMIT: log operator and witness collude to rewrite a record; a first-time evaluator without the Rekor pins accepts it",
+    "expected": "VERIFIED",
+    "got": "VERIFIED",
+    "pass": true,
+    "known_limit": true,
+    "verifier_summary": "20 records of pilot.example/adversarial-log verified against a pinned log key and witness quorum"
+  },
+  {
+    "id": "A24-collusion-anchor-offline",
+    "attack": "the same collusion; the evaluator pins the Rekor keys (offline check of the latest anchor)",
+    "expected": "FAILED",
+    "got": "FAILED",
+    "pass": true,
+    "verifier_summary": "Rekor anchor matches the records: anchor at size 20: rekor: anchored hash is not this checkpoint (records rewritten after they were anchored, or a forged anchor)"
+  },
+  {
+    "id": "A25-collusion-reanchor-offline",
+    "attack": "KNOWN LIMIT: the colluders also anchor the rewrite in Rekor with the real anchoring key; an offline check sees only the new anchor",
+    "expected": "VERIFIED",
+    "got": "VERIFIED",
+    "pass": true,
+    "known_limit": true,
+    "verifier_summary": "20 records of pilot.example/adversarial-log verified against a pinned log key and witness quorum"
+  },
+  {
+    "id": "A26-collusion-reanchor-online",
+    "attack": "the same re-anchored rewrite; the evaluator searches Rekor for every anchor by the anchoring key",
+    "expected": "FAILED",
+    "got": "FAILED",
+    "pass": true,
+    "verifier_summary": "Every Rekor anchor by this log's anchoring key matches the records: 1 Rekor anchor(s) by this log's anchoring key match no prefix of these records: the history was rewritten or forked after it was anchored, or records were lost. Rekor entries: 1000 (2026-11-26T19:15:19Z)"
+  },
+  {
+    "id": "A27-forged-anchor",
+    "attack": "corrupt Rekor's signed entry timestamp in anchor.json",
+    "expected": "FAILED",
+    "got": "FAILED",
+    "pass": true,
+    "verifier_summary": "Rekor anchor matches the records: anchor at size 20: rekor: signed entry timestamp does not verify (records rewritten after they were anchored, or a forged anchor)"
+  },
+  {
+    "id": "A28-anchor-withheld",
+    "attack": "anchor.json withheld from an evaluator who pinned the Rekor keys",
+    "expected": "UNVERIFIABLE",
+    "got": "UNVERIFIABLE",
+    "pass": true,
+    "verifier_summary": "Rekor anchor matches the records: anchoring keys are pinned but no anchor could be fetched: open <tmp>/A28-anchor-withheld/attacked-1795720519359799912/anchor.json: no such file or directory"
+  },
+  {
+    "id": "A29-rekor-unreachable",
+    "attack": "Rekor is down when the evaluator searches it",
+    "expected": "UNVERIFIABLE",
+    "got": "UNVERIFIABLE",
+    "pass": true,
+    "verifier_summary": "Every Rekor anchor by this log's anchoring key matches the records: rekor: search: HTTP 503: unavailable"
   }
 ]

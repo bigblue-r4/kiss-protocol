@@ -64,6 +64,17 @@ The [public witness network](https://witness-network.org) is the candidate. Its 
 
 **Quorum.** Evaluators choose `--quorum`. With *n* independent witnesses and quorum *k*, a split view needs the operator plus *k* witnesses to collude.
 
+### 4a. Optional: Rekor anchoring
+
+Off unless configured. Each anchor is a **permanent public record** in the chosen Rekor (the log's origin, a size, a root and the anchoring public key). Using the public Sigstore Rekor needs SGAIL leadership's approval.
+
+1. `harborlight-log anchor-keygen --out /etc/harborlight/anchor.key` (ECDSA P-256, mode 0600). Use it for nothing else: the verifier treats every Rekor entry made with it as an anchor of this log.
+2. Give evaluators `anchor.key.pub` through the same trusted channel as `log.key.pub`. They take Rekor's own public key from Sigstore's signed trust root.
+3. Add to `harborlight-log run`: `--rekor-url https://rekor.sigstore.dev --anchor-key /etc/harborlight/anchor.key [--anchor-interval 1h]`.
+4. Evaluators add `--rekor-key rekor.pub --anchor-key anchor.key.pub --rekor-url https://rekor.sigstore.dev`.
+
+Watch `status.json` → `anchor`: an `error` there means Rekor was unreachable or refused the entry. Logging and witnessing continue; the next round tries again.
+
 ## 5. Run
 
 ```sh
